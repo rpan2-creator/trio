@@ -1,11 +1,13 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Three Studies · PIP / INK STUDY / TABLE</title>
-<meta name="description" content="三个按 PRD P0 主线实现的移动 Web beta：PIP 像素宠物、INK STUDY 纹身试戴、TABLE 聚会游戏。">
+<meta name="description" content="Three mobile web apps: PIP pixel pet, INK STUDY tattoo try-on, TABLE game night.">
 <meta name="theme-color" content="#1b1a17">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/shared/frame.css">
 <style>
 .screen{background:#1b1a17}
@@ -33,28 +35,38 @@
 .launch{position:absolute;z-index:80;border-radius:15px;overflow:hidden;transition:all .38s cubic-bezier(.2,.8,.2,1)}
 .launch svg{width:100%;height:100%}
 .hint{font-size:12px;opacity:.75;text-align:center;margin:10px 0 12px}
-.cards{display:grid;gap:10px;margin:18px 0}
-.card{display:flex;gap:12px;align-items:flex-start;text-decoration:none;color:inherit;background:rgba(255,255,255,.7);border:1px solid #d6d2c8;border-radius:14px;padding:12px}
-.card:hover{background:#fff}
+.side-panel.hub{max-width:420px;font-family:Inter,-apple-system,system-ui,sans-serif}
+.hub h1{font:400 58px/1.02 "Instrument Serif",Georgia,serif;letter-spacing:-1.2px;margin:12px 0 14px}
+.hub .lede{font-size:16px;line-height:1.5;color:#5c5a52;margin:0 0 22px}
+.cards{display:grid;gap:10px;margin:0 0 22px}
+.card{display:flex;gap:14px;align-items:center;transition:transform .15s,box-shadow .15s;text-decoration:none;color:inherit;background:rgba(255,255,255,.7);border:1px solid #d6d2c8;border-radius:14px;padding:12px}
+.card:hover{background:#fff;transform:translateY(-2px);box-shadow:0 10px 24px -14px rgba(40,30,20,.45)}
+.card i{font-style:normal;margin-left:auto;font-size:18px;color:#8a867b}
+.card div{flex:1}
+.qrrow{display:flex;gap:16px;align-items:center;padding:14px;border-radius:16px;background:rgba(255,255,255,.55);border:1px dashed #cfc9bc}
+#hubqr{flex:none;width:108px;height:108px;padding:7px;background:#fff;border-radius:10px;border:1px solid #e2ddd2;display:grid;place-items:center;overflow:hidden}
+#hubqr img,#hubqr canvas{width:94px!important;height:94px!important;display:block}
+#hubqr canvas+img{display:none!important}
+.qrrow b{display:block;font-size:15px}
+.qrrow span{font-size:13px;color:#5c5a52}
 .card .ic{width:44px;height:44px;border-radius:11px;overflow:hidden;flex:none}
-.card b{display:block;font-size:15px}
+.card b{display:block;font-size:15px;letter-spacing:.2px}
 .card span{font-size:13px;color:#5c5a52}
 </style>
 </head>
 <body>
 <main class="stage">
-  <section class="side-panel" aria-labelledby="t">
-    <div class="eyebrow">THREE PRD · ONE BETA</div>
-    <h1 id="t">三个应用，一个入口</h1>
-    <p>每个应用都按各自 PRD 的 P0 主线实现，点击手机里的图标或下面的卡片进入。真机打开时会直接全屏运行，不显示外框。</p>
-    <nav class="cards" aria-label="应用列表">
-      <a class="card" href="/pip/"><span class="ic" data-icon="pip"></span><div><b>PIP 像素宠物</b><span>创建角色或真实宠物的像素伙伴：喂食、抚摸、说话、记忆、找玩具。</span></div></a>
-      <a class="card" href="/ink/"><span class="ic" data-icon="ink"></span><div><b>INK STUDY 纹身试戴</b><span>照片贴合、标记式 AR、版本比较、变化示意与咨询包。</span></div></a>
-      <a class="card" href="/table/"><span class="ic" data-icon="table"></span><div><b>TABLE 聚会游戏</b><span>按人数场景选游戏，房间码加入，三款服务端结算的游戏。</span></div></a>
+  <section class="side-panel hub" aria-labelledby="t">
+    <div class="eyebrow">THREE STUDIES · BETA</div>
+    <h1 id="t">Three apps.<br>One home screen.</h1>
+    <p class="lede">Tap an icon on the phone, or pick one below. On a real phone each app runs full screen.</p>
+    <nav class="cards" aria-label="Apps">
+      <a class="card" href="/pip/"><span class="ic" data-icon="pip"></span><div><b>PIP</b><span>Hatch, raise and play with a pixel pet — any species you can dream up.</span></div><i aria-hidden="true">→</i></a>
+      <a class="card" href="/ink/"><span class="ic" data-icon="ink"></span><div><b>INK STUDY</b><span>Try a tattoo on in simulated AR and watch it age over 20 years.</span></div><i aria-hidden="true">→</i></a>
+      <a class="card" href="/table/"><span class="ic" data-icon="table"></span><div><b>TABLE</b><span>Game night on one phone: cards, board games and party classics.</span></div><i aria-hidden="true">→</i></a>
     </nav>
-    <div id="svc" aria-live="polite"><span class="status-chip">正在检查服务…</span></div>
-    <div style="display:flex;gap:14px;align-items:center;margin-top:18px"><div id="hubqr" style="background:#fff;padding:8px;border-radius:10px;border:1px solid #d6d2c8;width:112px;height:112px" aria-label="用手机扫码打开本网站"></div>
-    <p style="font-size:13px;margin:0">用手机扫码打开同一网站。真机会全屏运行，可以用相机、麦克风和标记 AR；TABLE 多人房间也需要多台手机。</p></div>
+    <div class="qrrow"><div id="hubqr" role="img" aria-label="QR code that opens this site on your phone"></div>
+      <div><b>Open on your phone</b><span>Scan with your camera to play full screen.</span></div></div>
   </section>
 
   <div class="device-wrap">
@@ -99,11 +111,7 @@ document.querySelectorAll('.screen .app').forEach(a=>a.addEventListener('click',
   sc.appendChild(L);requestAnimationFrame(()=>Object.assign(L.style,{left:0,top:0,width:'100%',height:'100%',borderRadius:'56px'}));
   setTimeout(()=>location.href=a.getAttribute('href'),330);
 }));
-(function(){const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';s.onload=()=>{const b=document.getElementById('hubqr');new QRCode(b,{text:location.origin+'/',width:192,height:192,colorDark:'#26261f',colorLight:'#ffffff'});const c=b.querySelector('canvas,img');if(c)c.style.cssText='width:96px;height:96px';};document.head.appendChild(s);})();
-fetch('/api/health').then(r=>r.json()).then(h=>{
-  const c=(ok,t)=>`<span class="status-chip ${ok?'ok':'off'}">${t}${ok?' · 已连接':' · 未配置'}</span>`;
-  document.getElementById('svc').innerHTML=c(h.ai,'AI 模型')+c(h.rooms,'房间服务');
-}).catch(()=>{document.getElementById('svc').innerHTML='<span class="status-chip off">服务端不可用（本地预览）</span>'});
+(function(){const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';s.onload=()=>{const b=document.getElementById('hubqr');new QRCode(b,{text:location.origin+'/',width:192,height:192,colorDark:'#26261f',colorLight:'#ffffff'});};document.head.appendChild(s);})();
 </script>
 </body>
 </html>
