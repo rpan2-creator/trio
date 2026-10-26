@@ -53,6 +53,8 @@
       <a class="card" href="/table/"><span class="ic" data-icon="table"></span><div><b>TABLE 聚会游戏</b><span>按人数场景选游戏，房间码加入，三款服务端结算的游戏。</span></div></a>
     </nav>
     <div id="svc" aria-live="polite"><span class="status-chip">正在检查服务…</span></div>
+    <div style="display:flex;gap:14px;align-items:center;margin-top:18px"><div id="hubqr" style="background:#fff;padding:8px;border-radius:10px;border:1px solid #d6d2c8;width:112px;height:112px" aria-label="用手机扫码打开本网站"></div>
+    <p style="font-size:13px;margin:0">用手机扫码打开同一网站。真机会全屏运行，可以用相机、麦克风和标记 AR；TABLE 多人房间也需要多台手机。</p></div>
   </section>
 
   <div class="device-wrap">
@@ -97,6 +99,7 @@ document.querySelectorAll('.screen .app').forEach(a=>a.addEventListener('click',
   sc.appendChild(L);requestAnimationFrame(()=>Object.assign(L.style,{left:0,top:0,width:'100%',height:'100%',borderRadius:'56px'}));
   setTimeout(()=>location.href=a.getAttribute('href'),330);
 }));
+(function(){const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';s.onload=()=>{const b=document.getElementById('hubqr');new QRCode(b,{text:location.origin+'/',width:192,height:192,colorDark:'#26261f',colorLight:'#ffffff'});const c=b.querySelector('canvas,img');if(c)c.style.cssText='width:96px;height:96px';};document.head.appendChild(s);})();
 fetch('/api/health').then(r=>r.json()).then(h=>{
   const c=(ok,t)=>`<span class="status-chip ${ok?'ok':'off'}">${t}${ok?' · 已连接':' · 未配置'}</span>`;
   document.getElementById('svc').innerHTML=c(h.ai,'AI 模型')+c(h.rooms,'房间服务');

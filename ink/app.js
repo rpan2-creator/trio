@@ -552,17 +552,77 @@ async function buildPDF(){
 }
 
 /* ---------- AR ---------- */
+const desktop=()=>!matchMedia('(pointer:coarse)').matches;
+const libOf=id=>id&&id.startsWith('asset-lib-')?id.slice(6):null;
+const HIRO='https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/data/images/hiro.png';
+function loadQRLib(){return window.QRCode?Promise.resolve():new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
 VIEWS.arsetup={
-  html:()=>`${topbar('Live AR')}<div class="scroll stack"><div class="eyebrow">Limited planar tracking</div><h2>Live AR with a marker card</h2>
-   <div class="marker"><img src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/data/images/hiro.png" alt="The Hiro marker: a black square with the word Hiro inside"></div>
-   <ol style="padding-left:20px;margin:0" class="stack"><li>Print this card (about 6–8 cm wide) or show it on another screen.</li><li>Hold or lay it <b>flat, right next to</b> the spot — don’t stick it to skin.</li><li>Point your camera at it. The design appears on the card’s plane and follows it.</li></ol>
+  html:()=>{const lib=libOf(S.params.design);const dk=desktop();
+   return `${topbar('Live AR')}<div class="scroll stack"><div class="eyebrow">Limited planar tracking</div><h2>Live AR with a marker card</h2>
+   ${dk?`<div class="qcard"><div class="label">On a computer? Use your phone for real AR</div>
+     <div id="arqr" style="display:grid;place-items:center;background:#fff;padding:10px;min-height:190px" aria-label="QR code that opens live AR on your phone"><span class="small muted">Loading QR…</span></div>
+     <p class="small">Scan with your phone camera. It opens live AR with ${lib?'this design':'a library design you pick'} — the phone saves its own captures${lib?'':' (designs you uploaded stay on this computer)'}.</p>
+     <button class="btn block" data-sim>Preview on this computer (simulated)</button>
+     <p class="small muted">The computer preview fakes the tracking so you can see how AR mode behaves. Its frames aren’t saved as AR versions.</p></div>`:''}
+   <div class="marker"><img src="${HIRO}" alt="The Hiro marker: a black square with the word Hiro inside"></div>
+   <ol style="padding-left:20px;margin:0" class="stack"><li>Print this card (about 6–8 cm wide) or show it on another screen.</li><li>Hold or lay it <b>flat, right next to</b> the spot — don’t stick it to skin.</li><li>Point your phone camera at it. The design appears on the card’s plane and follows it.</li></ol>
    <p class="small muted">The card is a flat reference. It doesn’t scan your arm’s curve, and the design won’t bend around it. If the card leaves the view, the design pauses — it never floats on its own.</p>
-   <a class="btn block" href="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/data/images/hiro.png" target="_blank" rel="noopener" download>Open printable card</a>
-   <p class="err" id="arerr" role="alert"></p></div><div class="foot"><button class="btn primary block" data-start ${S.params.design?'':'disabled'}>Start camera</button>${S.params.design?'':'<p class="small muted">Save a photo version first so INK STUDY knows which design to show.</p>'}</div>`,
-  bind(){app.querySelector('[data-start]').onclick=()=>{const c=document.createElement('canvas');const ok=!!(c.getContext('webgl')||c.getContext('experimental-webgl'));
+   <a class="btn block" href="${HIRO}" target="_blank" rel="noopener" download>Open printable card</a>
+   <p class="err" id="arerr" role="alert"></p></div><div class="foot"><button class="btn ${dk?'':'primary'} block" data-start ${S.params.design?'':'disabled'}>Start camera${dk?' on this computer':''}</button>${S.params.design?'':'<p class="small muted">Save a photo version first so INK STUDY knows which design to show.</p>'}</div>`;},
+  bind(){
+    const lib=libOf(S.params.design);const box=app.querySelector('#arqr');
+    if(box)loadQRLib().then(()=>{box.innerHTML='';new QRCode(box,{text:location.origin+'/ink/ar'+(lib?'?lib='+lib:''),width:340,height:340,colorDark:'#20201E',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.M});const c=box.querySelector('canvas,img');if(c)c.style.cssText='width:170px;height:170px';})
+      .catch(()=>{box.innerHTML=`<p class="small">QR unavailable. On your phone, open <b>${esc(location.host)}/ink/ar</b></p>`;});
+    const sim=app.querySelector('[data-sim]');if(sim)sim.onclick=()=>go('arsim',{study:S.params.study,design:S.params.design});
+    app.querySelector('[data-start]').onclick=()=>{const c=document.createElement('canvas');const ok=!!(c.getContext('webgl')||c.getContext('experimental-webgl'));
     if(!ok){app.querySelector('#arerr').textContent='This browser doesn’t support WebGL, which live AR needs. Use the photo study instead.';return;}
     if(!navigator.mediaDevices){app.querySelector('#arerr').textContent='Camera isn’t available here (live AR needs HTTPS and camera permission).';return;}
     location.href=`/ink/ar?study=${encodeURIComponent(S.params.study)}&design=${encodeURIComponent(S.params.design)}`;};}
+};
+/* Desktop simulation: a virtual marker card over the study photo (or webcam). Clearly labelled, never saved as AR. */
+VIEWS.arsim={dark:true,
+  html:()=>`<div class="topbar"><button class="iconbtn" data-back aria-label="Back">${I.back}</button><div class="title"><span class="tag" style="color:#f5c542">Simulated AR · desktop preview</span></div><span style="width:44px"></span></div>
+   <div class="stagearea" id="simarea"><canvas id="simc" role="img" aria-label="Simulated AR preview"></canvas>
+    <p id="simst" role="status" style="position:absolute;top:10px;right:12px;margin:0;font:600 13px system-ui;padding:4px 8px;border-radius:6px;background:#000a">Tracked (simulated)</p></div>
+   <div class="panel"><div class="row"><label style="min-width:52px">Card</label>
+     ${[['-1,0','←','left'],['0,-1','↑','up'],['0,1','↓','down'],['1,0','→','right']].map(([d,s,n])=>`<button class="nbtn" data-mv="${d}" aria-label="Move card ${n}">${s}</button>`).join('')}
+     <button class="nbtn" data-rot="-10" aria-label="Turn card left">⟲</button></div>
+    <div class="row"><label style="min-width:52px" for="tilt">Tilt</label><input type="range" id="tilt" min="0" max="60" value="25"><label for="dsz" style="min-width:36px">Size</label><input type="range" id="dsz" min="80" max="320" value="200"></div>
+    <div class="row"><button class="nbtn" data-rot="10" aria-label="Turn card right">⟳</button><button class="nbtn" data-cam style="padding:0 12px;font-size:13px">Use webcam as background</button><button class="nbtn" data-shake aria-pressed="true" style="padding:0 12px;font-size:13px">Hand shake</button></div>
+    <p class="small" style="color:#bdb8ae;margin:0">Drag the card. Pull it off the edge to see the “Lost” state. For real tracking, scan the QR on the previous screen with your phone.</p></div>`,
+  async bind(){
+    const c=app.querySelector('#simc'),area=app.querySelector('#simarea'),st=app.querySelector('#simst');
+    const W=720,H=960;c.width=W;c.height=H;const sz=()=>{const k=Math.min(area.clientWidth/W,area.clientHeight/H);c.style.width=W*k+'px';c.style.height=H*k+'px';};sz();
+    const design=await assetImg(S.params.design);
+    let bg=null;const vs=S.params.study?await versionsOf(S.params.study):[];const bv=vs.slice().reverse().find(v=>v.body_asset_id);if(bv)bg=await assetImg(bv.body_asset_id);
+    const marker=await new Promise(r=>{const i=new Image();i.crossOrigin='anonymous';i.onload=()=>r(i);i.onerror=()=>{const m=document.createElement('canvas');m.width=m.height=256;const x=m.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,256,256);x.fillStyle='#000';x.fillRect(24,24,208,208);x.fillStyle='#fff';x.fillRect(68,68,120,120);x.fillStyle='#000';x.font='bold 40px sans-serif';x.textAlign='center';x.fillText('Hiro',128,142);r(m);};i.src=HIRO;});
+    const M={x:W*.5,y:H*.66,rot:-8,tilt:25,size:200,shake:true};let video=null,raf=0,t0=performance.now();
+    function quad(cx,cy,w,h,rot,tilt){const a=rot*Math.PI/180,co=Math.cos(a),si=Math.sin(a),k=Math.cos(tilt*Math.PI/180),p=Math.sin(tilt*Math.PI/180)*.35;
+      return [[-w/2,-h/2,1-p],[w/2,-h/2,1-p],[w/2,h/2,1+p],[-w/2,h/2,1+p]].map(([x,y,s])=>{x*=s;y*=k;return [cx+x*co-y*si,cy+x*si+y*co];});}
+    function frame(now){raf=requestAnimationFrame(frame);if(!document.contains(c)){cancelAnimationFrame(raf);if(video&&video.srcObject)video.srcObject.getTracks().forEach(t=>t.stop());return;}
+      const x=c.getContext('2d');x.fillStyle='#222';x.fillRect(0,0,W,H);
+      if(video&&video.readyState>=2){const k=Math.max(W/video.videoWidth,H/video.videoHeight);x.drawImage(video,(W-video.videoWidth*k)/2,(H-video.videoHeight*k)/2,video.videoWidth*k,video.videoHeight*k);}
+      else if(bg){const k=Math.max(W/bg.width,H/bg.height);x.drawImage(bg,(W-bg.width*k)/2,(H-bg.height*k)/2,bg.width*k,bg.height*k);}
+      else{x.fillStyle='#c9a184';x.beginPath();x.moveTo(0,H*.35);x.lineTo(W,H*.25);x.lineTo(W,H*.8);x.lineTo(0,H*.9);x.fill();}
+      const t=(now-t0)/1000,j=M.shake&&!matchMedia('(prefers-reduced-motion:reduce)').matches?1:0;
+      const cx=M.x+j*(Math.sin(t*1.7)*6+Math.sin(t*4.3)*2),cy=M.y+j*(Math.cos(t*1.3)*5),rot=M.rot+j*Math.sin(t*.9)*2;
+      const mq=quad(cx,cy,M.size*.62,M.size*.62,rot,M.tilt);
+      const tracked=mq.every(p=>p[0]>0&&p[0]<W&&p[1]>0&&p[1]<H);
+      if(marker)R.drawQuad(x,marker,mq,4);else{x.fillStyle='#fff';x.beginPath();mq.forEach((p,i)=>i?x.lineTo(p[0],p[1]):x.moveTo(p[0],p[1]));x.fill();}
+      if(tracked){const dq=quad(cx,cy-M.size*.95,M.size,M.size*design.height/design.width,rot,M.tilt);x.save();x.globalAlpha=.88;x.globalCompositeOperation='multiply';R.drawQuad(x,design,dq,8);x.restore();}
+      const s=tracked?'Tracked (simulated)':'Lost — paused (simulated)';if(st.textContent!==s){st.textContent=s;st.style.color=tracked?'#9fe0a8':'#ffb4a8';}
+      x.font='600 22px ui-monospace,monospace';x.fillStyle='rgba(245,197,66,.95)';x.fillText('SIMULATED AR — DESKTOP PREVIEW',20,H-24);}
+    raf=requestAnimationFrame(frame);
+    let drag=null;area.addEventListener('pointerdown',e=>{area.setPointerCapture(e.pointerId);drag={x:e.clientX,y:e.clientY,mx:M.x,my:M.y};});
+    area.addEventListener('pointermove',e=>{if(!drag)return;const k=W/c.getBoundingClientRect().width;M.x=drag.mx+(e.clientX-drag.x)*k;M.y=drag.my+(e.clientY-drag.y)*k;});
+    area.addEventListener('pointerup',()=>drag=null);
+    app.querySelectorAll('[data-mv]').forEach(b=>b.onclick=()=>{const [dx,dy]=b.dataset.mv.split(',').map(Number);M.x+=dx*30;M.y+=dy*30;});
+    app.querySelectorAll('[data-rot]').forEach(b=>b.onclick=()=>M.rot+= +b.dataset.rot);
+    app.querySelector('#tilt').oninput=e=>M.tilt=+e.target.value;app.querySelector('#dsz').oninput=e=>M.size=+e.target.value;
+    const sh=app.querySelector('[data-shake]');sh.onclick=()=>{M.shake=!M.shake;sh.setAttribute('aria-pressed',String(M.shake));};
+    app.querySelector('[data-cam]').onclick=async e=>{try{const s=await navigator.mediaDevices.getUserMedia({video:true});video=document.createElement('video');video.muted=true;video.playsInline=true;video.srcObject=s;await video.play();camStream=s;e.target.textContent='Webcam on';}
+      catch(err){toast('Webcam unavailable ('+err.name+'). Using your study photo.');}};
+  }
 };
 
 /* ---------- privacy ---------- */

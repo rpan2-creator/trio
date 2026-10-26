@@ -36,14 +36,28 @@ button{font:inherit;color:inherit;cursor:pointer}
 </div>
 <div id="err" role="alert"><div><p id="errt"></p><p><button class="b" onclick="history.back()">Back to study</button></p></div></div>
 <script src="/ink/store.js"></script>
+<script src="/ink/designs.js"></script>
 <script>
 (async function(){
-  const q=new URLSearchParams(location.search),studyId=q.get('study'),designId=q.get('design');
+  const q=new URLSearchParams(location.search);let studyId=q.get('study'),designId=q.get('design');const lib=q.get('lib');
   const St=window.InkStore;const st=document.getElementById('st'),msg=document.getElementById('msg'),cap=document.getElementById('cap');
   const fail=t=>{document.getElementById('errt').textContent=t;document.getElementById('err').style.display='grid';};
   document.getElementById('back').onclick=()=>{location.href='/ink/?study='+encodeURIComponent(studyId||'');};
-  const asset=designId&&await St.get('assets',designId).catch(()=>null);
-  if(!asset){fail('Couldn’t find the design for this study on this device.');return;}
+  // Opened from a QR code on another device: use a library design and keep captures in a study on this phone.
+  async function libAsset(id){const d=window.InkDesigns.DESIGNS.find(x=>x.id===id);if(!d)return null;const aid='asset-'+id;let a=await St.get('assets',aid).catch(()=>null);if(a)return a;
+    const c=await window.InkDesigns.raster(d.svg,1024);const blob=await new Promise(r=>c.toBlob(r,'image/png'));a={id:aid,type:'design',blob,width:1024,height:1024,name:d.name,rights_source:'library:'+id,created:Date.now()};await St.put('assets',a);return a;}
+  let asset=designId&&await St.get('assets',designId).catch(()=>null);
+  if(!asset&&!lib){ // let the person pick a library design
+    const pick=await new Promise(res=>{const o=document.createElement('div');o.style.cssText='position:fixed;inset:0;z-index:300;background:#171717;overflow:auto;padding:max(20px,env(safe-area-inset-top)) 18px 24px';
+      o.innerHTML='<h2 style="font:400 24px Georgia,serif;margin:8px 0 4px">Pick a design to try</h2><p style="color:#bdb8ae;font-size:14px;margin:0 0 14px">Designs you uploaded on another device stay there. These are INK STUDY library designs.</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+        window.InkDesigns.DESIGNS.map(d=>'<button data-id="'+d.id+'" style="background:#fff;border:0;border-radius:8px;padding:8px;color:#20201E;text-align:left"><div style="aspect-ratio:1">'+d.svg+'</div><b style="font-size:13px">'+d.name+'</b></button>').join('')+'</div>';
+      document.body.appendChild(o);o.querySelectorAll('[data-id]').forEach(b=>b.onclick=()=>{o.remove();res(b.dataset.id);});});
+    asset=await libAsset(pick);
+  } else if(!asset&&lib) asset=await libAsset(lib);
+  if(!asset){fail('Couldn’t find that design on this device.');return;}
+  designId=asset.id;
+  if(!studyId||!(await St.get('studies',studyId).catch(()=>null))){const all=await St.all('studies');let s=all.find(x=>x.title==='Live AR on this phone');
+    if(!s){s={id:St.uid(),title:'Live AR on this phone',body_region:'Other',created:Date.now(),updated:Date.now()};await St.put('studies',s);await St.put('meta',{id:'welcomed',v:true});}studyId=s.id;}
   const load=src=>new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src));document.head.appendChild(s);});
   try{await load('https://cdn.jsdelivr.net/npm/aframe@1.3.0/dist/aframe-v1.3.0.min.js');await load('https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.js');}
   catch(e){fail('The AR library couldn’t load. Check your connection, or use the photo study.');return;}
