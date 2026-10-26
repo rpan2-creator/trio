@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>INK STUDY · Live AR</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#000;font:15px/1.4 -apple-system,system-ui,sans-serif;color:#F9F6EE}
+.hud{position:fixed;left:0;right:0;z-index:100;display:flex;align-items:center;gap:8px;padding:10px 14px}
+.top{top:0;padding-top:max(10px,env(safe-area-inset-top));background:linear-gradient(#000a,#0000)}
+.bot{bottom:0;flex-direction:column;padding-bottom:max(14px,env(safe-area-inset-bottom));background:linear-gradient(#0000,#000c)}
+button{font:inherit;color:inherit;cursor:pointer}
+.b{min-height:44px;min-width:44px;padding:0 14px;border-radius:8px;border:1px solid #6b6863;background:#171717cc}
+.b:focus-visible{outline:3px solid #fff;outline-offset:2px}
+.tag{font:600 11px ui-monospace,monospace;letter-spacing:.6px;text-transform:uppercase;border:1px solid currentColor;padding:4px 7px;border-radius:3px}
+#st{flex:1;text-align:right;font-weight:600}
+#st[data-s=tracked]{color:#9fe0a8}#st[data-s=lost]{color:#ffb4a8}
+.shutter{width:72px;height:72px;border-radius:50%;border:4px solid #fff;background:#fff;box-shadow:inset 0 0 0 3px #171717}
+.shutter:disabled{opacity:.35;cursor:not-allowed}
+.row{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap}
+#msg{text-align:center;font-size:13px;max-width:420px}
+#err{position:fixed;inset:0;z-index:200;display:none;place-items:center;padding:24px;background:#171717;text-align:center}
+</style>
+</head>
+<body>
+<div class="hud top"><button class="b" id="back">← Back</button><span class="tag">AR marker study</span><span id="st" data-s="searching" role="status" aria-live="polite">Searching for the card…</span></div>
+<div class="hud bot">
+  <p id="msg">Point the camera at the printed card next to the spot. The design appears only while the card is tracked.</p>
+  <div class="row" role="group" aria-label="Adjust design">
+    <button class="b" data-s="-0.1" aria-label="Smaller">−</button><button class="b" data-s="0.1" aria-label="Larger">+</button>
+    <button class="b" data-r="-15" aria-label="Rotate left">⟲</button><button class="b" data-r="15" aria-label="Rotate right">⟳</button>
+    <button class="b" data-x="-0.1" aria-label="Move left">←</button><button class="b" data-x="0.1" aria-label="Move right">→</button>
+    <button class="b" data-y="-0.1" aria-label="Move up">↑</button><button class="b" data-y="0.1" aria-label="Move down">↓</button>
+  </div>
+  <button class="shutter" id="cap" disabled aria-label="Capture this frame"></button>
+</div>
+<div id="err" role="alert"><div><p id="errt"></p><p><button class="b" onclick="history.back()">Back to study</button></p></div></div>
+<script src="/ink/store.js"></script>
+<script>
+(async function(){
+  const q=new URLSearchParams(location.search),studyId=q.get('study'),designId=q.get('design');
+  const St=window.InkStore;const st=document.getElementById('st'),msg=document.getElementById('msg'),cap=document.getElementById('cap');
+  const fail=t=>{document.getElementById('errt').textContent=t;document.getElementById('err').style.display='grid';};
+  document.getElementById('back').onclick=()=>{location.href='/ink/?study='+encodeURIComponent(studyId||'');};
+  const asset=designId&&await St.get('assets',designId).catch(()=>null);
+  if(!asset){fail('Couldn’t find the design for this study on this device.');return;}
+  const load=src=>new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src));document.head.appendChild(s);});
+  try{await load('https://cdn.jsdelivr.net/npm/aframe@1.3.0/dist/aframe-v1.3.0.min.js');await load('https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.js');}
+  catch(e){fail('The AR library couldn’t load. Check your connection, or use the photo study.');return;}
+  const texUrl=URL.createObjectURL(asset.blob);const ratio=asset.height/asset.width;
+  const T={s:1.3,r:0,x:0,y:0};
+  document.body.insertAdjacentHTML('beforeend',`<a-scene embedded vr-mode-ui="enabled:false" renderer="preserveDrawingBuffer:true;antialias:true;alpha:true" arjs="sourceType:webcam;debugUIEnabled:false;detectionMode:mono_and_matrix;matrixCodeType:3x3;" style="position:fixed;inset:0">
+    <a-assets><img id="tex" src="${texUrl}"></a-assets>
+    <a-marker preset="hiro" emitevents="true" smooth="true" smoothCount="5" id="mk">
+      <a-plane id="pl" src="#tex" rotation="-90 0 0" width="${T.s}" height="${(T.s*ratio).toFixed(3)}" material="transparent:true;alphaTest:0.05;opacity:0.88;side:double;shader:flat"></a-plane>
+    </a-marker><a-entity camera></a-entity></a-scene>`);
+  const mk=document.getElementById('mk'),pl=document.getElementById('pl'),scene=document.querySelector('a-scene');
+  let tracked=false,since=0,timer=0;
+  const set=(s,t)=>{st.dataset.s=s;st.textContent=t;};
+  mk.addEventListener('markerFound',()=>{tracked=true;since=performance.now();set('tracked','Tracked');clearTimeout(timer);timer=setTimeout(()=>{if(tracked)cap.disabled=false;},500);msg.textContent='Hold steady, then capture. Adjust size and angle with the buttons.';});
+  mk.addEventListener('markerLost',()=>{tracked=false;cap.disabled=true;set('lost','Lost — paused');msg.textContent='The card left the view, so the design is hidden. Bring the card back, try better light, or go back.';});
+  window.addEventListener('camera-error',()=>fail('Camera access was declined or isn’t available. Live AR needs camera permission over HTTPS. You can still use the photo study.'));
+  window.addEventListener('arjs-video-loaded',()=>{if(!tracked)set('searching','Searching for the card…');});
+  const apply=()=>{pl.setAttribute('width',T.s);pl.setAttribute('height',T.s*ratio);pl.setAttribute('position',`${T.x} 0 ${T.y}`);pl.setAttribute('rotation',`-90 ${T.r} 0`);};
+  document.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{T.s=Math.max(.3,Math.min(4,T.s+ +b.dataset.s));apply();});
+  document.querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>{T.r+= +b.dataset.r;apply();});
+  document.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{T.x+= +b.dataset.x;apply();});
+  document.querySelectorAll('[data-y]').forEach(b=>b.onclick=()=>{T.y+= +b.dataset.y;apply();});
+  cap.onclick=async()=>{
+    if(!tracked)return;cap.disabled=true;msg.textContent='Saving capture…';
+    try{
+      const video=document.getElementById('arjs-video')||document.querySelector('video');const gl=scene.canvas;
+      const W=innerWidth,H=innerHeight,k=Math.min(2,devicePixelRatio||1);const c=document.createElement('canvas');c.width=W*k;c.height=H*k;const x=c.getContext('2d');
+      const vr=video.getBoundingClientRect();x.drawImage(video,vr.left*k,vr.top*k,vr.width*k,vr.height*k);
+      const gr=gl.getBoundingClientRect();x.drawImage(gl,gr.left*k,gr.top*k,gr.width*k,gr.height*k);
+      const toBlob=(cv,q,max)=>{const s=Math.min(1,(max||1600)/Math.max(cv.width,cv.height));const t=document.createElement('canvas');t.width=cv.width*s;t.height=cv.height*s;t.getContext('2d').drawImage(cv,0,0,t.width,t.height);return new Promise(r=>t.toBlob(r,'image/jpeg',q));};
+      const blob=await toBlob(c,.9,1600),thumb=await toBlob(c,.82,360);
+      const a={id:St.uid(),type:'capture',blob,width:Math.round(c.width*Math.min(1,1600/Math.max(c.width,c.height))),height:Math.round(c.height*Math.min(1,1600/Math.max(c.width,c.height))),created:Date.now()};
+      await St.put('assets',a);
+      const v={id:St.uid(),study_id:studyId,mode:'ar_marker',capture_asset_id:a.id,body_asset_id:null,layers:[{design_asset_id:designId}],
+        ar:{target_version:'hiro@AR.js-3.4.5',tracking_state:'tracked',device:(navigator.userAgent.match(/(iPhone|iPad|Android[^;]*|Mac OS X|Windows)/)||['unknown'])[0],transform:Object.assign({},T)},
+        thumb,created:Date.now(),schema_version:1};
+      await St.put('versions',v);const s=await St.get('studies',studyId);if(s){s.updated=Date.now();await St.put('studies',s);}
+      location.href='/ink/?study='+encodeURIComponent(studyId)+'&v='+encodeURIComponent(v.id);
+    }catch(e){msg.textContent='Couldn’t save the capture ('+e.message+'). Try again.';cap.disabled=!tracked;}
+  };
+})();
+</script>
+</body>
+</html>

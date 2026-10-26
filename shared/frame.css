@@ -1,0 +1,103 @@
+/* Realistic iPhone frame shared by the hub and all three apps.
+   Screen is 393 x 852 CSS px (iPhone 16 Pro logical size). */
+:root{
+  --screen-w:393px; --screen-h:852px;
+  --bezel:11px; --edge:5px;
+  --body-r:69px; --screen-r:56px;
+  --stage-bg:#e9e6df;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--stage-bg);font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Noto Sans SC","PingFang SC",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.stage{min-height:100dvh;display:flex;align-items:center;justify-content:center;gap:56px;padding:24px;position:relative;overflow:hidden}
+.stage::before{content:"";position:absolute;inset:0;background:radial-gradient(1100px 700px at 50% 40%,rgba(255,255,255,.75),transparent 70%);pointer-events:none}
+
+/* outer device */
+.device-wrap{position:relative;transform-origin:center center;flex:none}
+.iphone{
+  position:relative;
+  width:calc(var(--screen-w) + 2*var(--bezel) + 2*var(--edge));
+  height:calc(var(--screen-h) + 2*var(--bezel) + 2*var(--edge));
+  border-radius:var(--body-r);
+  padding:var(--edge);
+  background:
+    linear-gradient(145deg,#d9d7d2 0%,#8f8d88 14%,#c9c6c0 28%,#77756f 52%,#b9b6b0 74%,#6e6c67 92%,#a5a29c 100%);
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,.35),
+    inset 0 0 1px 1px rgba(255,255,255,.55),
+    inset 0 0 0 2px rgba(0,0,0,.25),
+    0 50px 90px -30px rgba(30,25,20,.55),
+    0 30px 40px -25px rgba(30,25,20,.45),
+    0 2px 6px rgba(0,0,0,.18);
+}
+.iphone::after{ /* thin highlight running along the titanium band */
+  content:"";position:absolute;inset:1px;border-radius:calc(var(--body-r) - 1px);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.7),inset 0 -1px 0 rgba(0,0,0,.25);pointer-events:none}
+.bezel{
+  position:relative;width:100%;height:100%;
+  border-radius:calc(var(--body-r) - var(--edge));
+  background:#050505;padding:var(--bezel);
+  box-shadow:inset 0 0 0 1.5px #1c1c1c,inset 0 0 6px rgba(255,255,255,.06);
+}
+.screen{
+  position:relative;width:var(--screen-w);height:var(--screen-h);
+  border-radius:var(--screen-r);overflow:hidden;background:#fff;isolation:isolate;
+  container-type:inline-size;
+}
+/* glass glare */
+.screen::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:60;
+  background:linear-gradient(118deg,rgba(255,255,255,.07) 0%,rgba(255,255,255,.02) 32%,transparent 33%);mix-blend-mode:screen}
+
+/* side buttons */
+.btn-side{position:absolute;background:linear-gradient(90deg,#6f6d68,#b8b5af 45%,#85837e);border-radius:2px;box-shadow:0 0 0 .5px rgba(0,0,0,.4)}
+.btn-action{left:-3px;top:178px;width:4px;height:34px}
+.btn-vol-up{left:-3px;top:238px;width:4px;height:64px}
+.btn-vol-down{left:-3px;top:316px;width:4px;height:64px}
+.btn-power{right:-3px;top:262px;width:4px;height:104px;background:linear-gradient(270deg,#6f6d68,#b8b5af 45%,#85837e)}
+.btn-camera{right:-2px;top:560px;width:3px;height:56px;background:linear-gradient(270deg,#55534f,#9b9893);border-radius:2px}
+
+/* dynamic island + status bar */
+.island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:125px;height:37px;border-radius:20px;background:#000;z-index:70;
+  box-shadow:0 0 0 .5px rgba(255,255,255,.04)}
+.island::after{content:"";position:absolute;right:21px;top:12px;width:13px;height:13px;border-radius:50%;
+  background:radial-gradient(circle at 35% 35%,#2b3550 0,#0c1020 45%,#000 70%)}
+.statusbar{position:absolute;top:0;left:0;right:0;height:54px;z-index:65;display:flex;justify-content:space-between;align-items:center;
+  padding:6px 34px 0 50px;font:600 17px/1 -apple-system,"SF Pro Text",system-ui,sans-serif;color:#000;pointer-events:none;letter-spacing:-.2px}
+.statusbar.light{color:#fff}
+.statusbar .sb-right{display:flex;gap:6px;align-items:center}
+.statusbar svg{display:block;fill:currentColor}
+.home-ind{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:139px;height:5px;border-radius:3px;background:#111;z-index:65;border:0;padding:0;cursor:pointer}
+.home-ind.light{background:#f2f2f2}
+.home-ind:focus-visible{outline:3px solid #4b7bff;outline-offset:4px}
+
+/* app viewport inside the screen */
+.app-root{position:absolute;inset:0;overflow:hidden}
+
+/* outside-device chrome */
+.side-panel{max-width:340px;position:relative;z-index:1;color:#26261f}
+.side-panel h1{font-size:30px;line-height:1.15;letter-spacing:-.8px;margin:8px 0 12px}
+.side-panel p{color:#5c5a52;font-size:15px;margin:0 0 14px}
+.side-panel .eyebrow{font:700 11px/1.4 ui-monospace,SFMono-Regular,monospace;letter-spacing:2px;color:#7a776e}
+.back-hub{display:inline-flex;align-items:center;gap:6px;color:#26261f;text-decoration:none;font-size:14px;border:1px solid #c9c5bb;border-radius:999px;padding:8px 14px;background:rgba(255,255,255,.6)}
+.back-hub:hover{background:#fff}
+.side-panel ul{padding-left:18px;margin:0 0 16px;font-size:14px;color:#4a483f}
+.side-panel li{margin:4px 0}
+.status-chip{display:inline-block;font-size:12px;padding:3px 9px;border-radius:999px;background:#fff;border:1px solid #d6d2c8;margin:2px 4px 2px 0}
+.status-chip.ok{border-color:#9fbf9f;color:#1f5a2c}
+.status-chip.off{border-color:#d7b6a8;color:#7a3a22}
+
+/* Real phones: drop the drawn device, use the real screen */
+@media (max-width:520px){
+  body{background:#000}
+  .stage{padding:0;display:block;min-height:auto}
+  .stage::before,.side-panel{display:none}
+  .device-wrap{transform:none!important}
+  .iphone{width:100vw;height:100dvh;padding:0;border-radius:0;background:none;box-shadow:none}
+  .iphone::after,.btn-side,.island,.statusbar,.home-ind{display:none}
+  .bezel{padding:0;border-radius:0;box-shadow:none}
+  .screen{width:100vw;height:100dvh;border-radius:0}
+  .screen::after{display:none}
+  :root{--safe-top:env(safe-area-inset-top,0px);--safe-bottom:env(safe-area-inset-bottom,0px)}
+}
+@media (max-width:1000px) and (min-width:521px){ .side-panel{display:none} }
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}

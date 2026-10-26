@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>INK STUDY · Tattoo try-on</title>
+<meta name="description" content="Compare tattoo designs and placements on your own body, then bring a clear package to your artist.">
+<meta name="theme-color" content="#F4F1EB">
+<link rel="stylesheet" href="/shared/frame.css">
+<link rel="stylesheet" href="/ink/ink.css">
+</head>
+<body>
+<main class="stage">
+  <section class="side-panel">
+    <a class="back-hub" href="/">← 所有应用</a>
+    <div class="eyebrow" style="margin-top:22px">PRD 02 · P0 BETA</div>
+    <h1>INK STUDY 纹身试戴</h1>
+    <p>照片贴合（移动、缩放、旋转、四角透视、图层混合）与标记式实时 AR 分开标识；变化示意是参数化的情境图，不是个人预测。</p>
+    <ul>
+      <li>身体照片只存在本机，导入时重新编码、去除 EXIF</li>
+      <li>实时 AR：打印 Hiro 标记卡，放在想试的部位旁</li>
+      <li>咨询包：PDF，只含你勾选的版本</li>
+      <li>AI 只起草咨询问题，原图默认不发送</li>
+    </ul>
+    <div id="svc"></div>
+  </section>
+  <div class="device-wrap">
+    <div class="iphone"><div class="bezel"><div class="screen">
+      <div id="app" class="app-root ink"></div>
+    </div></div></div>
+  </div>
+</main>
+<div id="sr" class="sr-only" aria-live="polite"></div>
+<script src="/shared/frame.js"></script>
+<script src="/ink/store.js"></script>
+<script src="/ink/designs.js"></script>
+<script src="/ink/render.js"></script>
+<script src="/ink/app.js"></script>
+</body>
+</html>

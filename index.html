@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Three Studies · PIP / INK STUDY / TABLE</title>
+<meta name="description" content="三个按 PRD P0 主线实现的移动 Web beta：PIP 像素宠物、INK STUDY 纹身试戴、TABLE 聚会游戏。">
+<meta name="theme-color" content="#1b1a17">
+<link rel="stylesheet" href="/shared/frame.css">
+<style>
+.screen{background:#1b1a17}
+.wall{position:absolute;inset:0;
+  background:
+   radial-gradient(420px 380px at 18% 22%,#3b6a52 0,transparent 65%),
+   radial-gradient(380px 420px at 92% 58%,#2b4fb8 0,transparent 62%),
+   radial-gradient(340px 300px at 30% 92%,#9a3a2c 0,transparent 66%),
+   linear-gradient(170deg,#2a2924,#141310)}
+.wall::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(255,255,255,.018) 0 1px,transparent 1px 3px)}
+.home{position:absolute;inset:0;padding:calc(var(--safe-top) + 26px) 26px calc(var(--safe-bottom) + 22px);display:flex;flex-direction:column;color:#fff;z-index:2}
+.widget{border-radius:22px;padding:18px 18px 16px;background:rgba(255,255,255,.12);backdrop-filter:blur(22px) saturate(1.4);-webkit-backdrop-filter:blur(22px) saturate(1.4);border:1px solid rgba(255,255,255,.12)}
+.widget .d{font:600 13px/1.2 -apple-system,system-ui;opacity:.8;text-transform:uppercase;letter-spacing:.6px}
+.widget .big{font:700 30px/1.1 -apple-system,system-ui;letter-spacing:-.6px;margin:6px 0 8px}
+.widget p{margin:0;font-size:14px;line-height:1.45;opacity:.88}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:26px 10px;margin-top:28px}
+.app{display:flex;flex-direction:column;align-items:center;gap:6px;text-decoration:none;color:#fff;font-size:12px;letter-spacing:.1px;border-radius:16px;outline-offset:4px}
+.app .ic{width:62px;height:62px;border-radius:15px;overflow:hidden;box-shadow:0 6px 14px rgba(0,0,0,.35),inset 0 0 0 .5px rgba(255,255,255,.18);transition:transform .14s ease}
+.app .ic svg{width:100%;height:100%;display:block}
+.app:active .ic{transform:scale(.9)}
+.app:focus-visible{outline:3px solid #fff}
+.spacer{flex:1}
+.dock{display:flex;justify-content:space-around;padding:14px 12px;border-radius:30px;background:rgba(255,255,255,.16);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px)}
+.dock .app>span:not(.ic){display:none}
+.launch{position:absolute;z-index:80;border-radius:15px;overflow:hidden;transition:all .38s cubic-bezier(.2,.8,.2,1)}
+.launch svg{width:100%;height:100%}
+.hint{font-size:12px;opacity:.75;text-align:center;margin:10px 0 12px}
+.cards{display:grid;gap:10px;margin:18px 0}
+.card{display:flex;gap:12px;align-items:flex-start;text-decoration:none;color:inherit;background:rgba(255,255,255,.7);border:1px solid #d6d2c8;border-radius:14px;padding:12px}
+.card:hover{background:#fff}
+.card .ic{width:44px;height:44px;border-radius:11px;overflow:hidden;flex:none}
+.card b{display:block;font-size:15px}
+.card span{font-size:13px;color:#5c5a52}
+</style>
+</head>
+<body>
+<main class="stage">
+  <section class="side-panel" aria-labelledby="t">
+    <div class="eyebrow">THREE PRD · ONE BETA</div>
+    <h1 id="t">三个应用，一个入口</h1>
+    <p>每个应用都按各自 PRD 的 P0 主线实现，点击手机里的图标或下面的卡片进入。真机打开时会直接全屏运行，不显示外框。</p>
+    <nav class="cards" aria-label="应用列表">
+      <a class="card" href="/pip/"><span class="ic" data-icon="pip"></span><div><b>PIP 像素宠物</b><span>创建角色或真实宠物的像素伙伴：喂食、抚摸、说话、记忆、找玩具。</span></div></a>
+      <a class="card" href="/ink/"><span class="ic" data-icon="ink"></span><div><b>INK STUDY 纹身试戴</b><span>照片贴合、标记式 AR、版本比较、变化示意与咨询包。</span></div></a>
+      <a class="card" href="/table/"><span class="ic" data-icon="table"></span><div><b>TABLE 聚会游戏</b><span>按人数场景选游戏，房间码加入，三款服务端结算的游戏。</span></div></a>
+    </nav>
+    <div id="svc" aria-live="polite"><span class="status-chip">正在检查服务…</span></div>
+  </section>
+
+  <div class="device-wrap">
+    <div class="iphone"><div class="bezel"><div class="screen">
+      <div class="wall" aria-hidden="true"></div>
+      <div class="home">
+        <div class="widget" aria-hidden="true">
+          <div class="d" id="wd">Monday</div>
+          <div class="big">Three studies</div>
+          <p>A pet that remembers, a tattoo you can try on, a game the whole table can join.</p>
+        </div>
+        <div class="grid" role="list">
+          <a class="app" role="listitem" href="/pip/" data-app="pip"><span class="ic" data-icon="pip"></span><span>PIP</span></a>
+          <a class="app" role="listitem" href="/ink/" data-app="ink"><span class="ic" data-icon="ink"></span><span>INK STUDY</span></a>
+          <a class="app" role="listitem" href="/table/" data-app="table"><span class="ic" data-icon="table"></span><span>TABLE</span></a>
+        </div>
+        <div class="spacer"></div>
+        <div class="hint">Tap an app to open it</div>
+        <div class="dock" aria-hidden="true">
+          <a class="app" tabindex="-1" href="/pip/" data-app="pip"><span class="ic" data-icon="pip"></span><span>PIP</span></a>
+          <a class="app" tabindex="-1" href="/ink/" data-app="ink"><span class="ic" data-icon="ink"></span><span>INK</span></a>
+          <a class="app" tabindex="-1" href="/table/" data-app="table"><span class="ic" data-icon="table"></span><span>TABLE</span></a>
+        </div>
+      </div>
+    </div></div></div>
+  </div>
+</main>
+<script src="/shared/icons.js"></script>
+<script src="/shared/frame.js"></script>
+<script>
+Frame.tone('light');
+document.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=APP_ICONS[el.dataset.icon]);
+document.getElementById('wd').textContent=new Date().toLocaleDateString('en-US',{weekday:'long',month:'short',day:'numeric'});
+const reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
+document.querySelectorAll('.screen .app').forEach(a=>a.addEventListener('click',e=>{
+  if(reduce||matchMedia('(max-width:520px)').matches) return;
+  e.preventDefault();
+  const sc=document.querySelector('.screen'),ic=a.querySelector('.ic');
+  const s=sc.getBoundingClientRect(),r=ic.getBoundingClientRect(),k=s.width/sc.offsetWidth;
+  const L=document.createElement('div');L.className='launch';L.innerHTML=APP_ICONS[a.dataset.app];
+  Object.assign(L.style,{left:(r.left-s.left)/k+'px',top:(r.top-s.top)/k+'px',width:r.width/k+'px',height:r.height/k+'px'});
+  sc.appendChild(L);requestAnimationFrame(()=>Object.assign(L.style,{left:0,top:0,width:'100%',height:'100%',borderRadius:'56px'}));
+  setTimeout(()=>location.href=a.getAttribute('href'),330);
+}));
+fetch('/api/health').then(r=>r.json()).then(h=>{
+  const c=(ok,t)=>`<span class="status-chip ${ok?'ok':'off'}">${t}${ok?' · 已连接':' · 未配置'}</span>`;
+  document.getElementById('svc').innerHTML=c(h.ai,'AI 模型')+c(h.rooms,'房间服务');
+}).catch(()=>{document.getElementById('svc').innerHTML='<span class="status-chip off">服务端不可用（本地预览）</span>'});
+</script>
+</body>
+</html>
