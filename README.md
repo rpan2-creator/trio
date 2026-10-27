@@ -3,14 +3,15 @@
 Three mobile web betas built from their PRDs (P0 main lines), behind one entry page.
 On a desktop each app runs inside a drawn iPhone frame; on a real phone it runs full screen.
 
-| Path | App | PRD |
+| Path | App | What it is |
 | --- | --- | --- |
-| `/` | Home screen with the three app icons | — |
-| `/pip/` | PIP pixel pet | 01-Pixel-Pet-PRD |
-| `/ink/` (+ `/ink/ar`) | INK STUDY tattoo try-on | 02-AR-Tattoo-PRD |
-| `/table/` | TABLE party games | 03-Party-Games-PRD |
+| `/` | Home screen | Phone home screen with the three app icons + QR to open on a phone |
+| `/pip/` | PIP | Gamified pixel pet: endless procedural species, egg hatching, feed/bath/fetch/tricks/dress-up, 3 mini-games, shop, quests, levels |
+| `/ink/` | INK STUDY | Simulated AR tattoo try-on on a WebGL 3D arm/calf, 20 original flash designs, Tattoo Builder, 0–20 year aging timeline, consultation pack |
+| `/table/` | TABLE | Game night on one phone: Crazy Eights, Blackjack, Ludo, Werewolf, Forehead — bots + pass-and-play |
 
 No build step and no npm dependencies: static HTML/CSS/JS plus Vercel Node functions in `api/`.
+Workflow: edit in VS Code → `git push` → Vercel redeploys automatically.
 
 ## Server pieces (Vercel functions)
 
@@ -35,6 +36,7 @@ node scripts/dev-server.js   # http://localhost:3000, with an in-memory Redis st
 
 Camera, microphone and live AR need HTTPS on phones — test those on the Vercel URL.
 
-## What is deliberately not here (per the PRDs)
+## Notes
 
-P1/P2 items are hidden rather than shown as dead buttons: PIP room decorating, second pet, notifications; INK artist directory, requests, share links, practice workbench; TABLE board game, big-screen mode, commercial titles. Live AR is marker-based (printed Hiro card) on flat-ish areas only; change studies are illustrations, not predictions.
+- INK STUDY aging is an illustrative model of known trends (black most stable, light/pastel inks fade fastest, sun accelerates fading, fine lines blur more) — not a medical prediction.
+- TABLE online rooms (`api/room.js`) are kept for later; the shipped app is fully playable on one device.
