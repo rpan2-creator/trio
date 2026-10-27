@@ -186,7 +186,7 @@ body.ink-page{--stage-bg:#0b0a09;background:var(--stage-bg);color:var(--bone)}
 .palette-bar{display:flex;height:10px;border-radius:6px;overflow:hidden;margin:10px 0 8px;background:var(--ink-3)}
 .palette-legend{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12px;color:var(--bone-2)}
 .palette-legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-.sticky-cta{position:sticky;bottom:calc(var(--safe-bottom) + 84px);padding:14px 20px 0;display:flex;gap:10px;z-index:5}
+.sticky-cta{position:sticky;bottom:calc(var(--safe-bottom) + 72px);margin-top:18px;padding:22px 20px 12px;display:flex;gap:10px;z-index:5;background:linear-gradient(transparent,var(--ink) 40%)}
 .sticky-cta .btn{box-shadow:0 12px 30px -8px rgba(0,0,0,.8)}
 
 /* ---------- builder ---------- */

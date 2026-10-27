@@ -222,18 +222,21 @@ void main(){
     vec2 cuv = clamp(tuv,0.,1.);
     float edge = smoothstep(0.,.02,min(min(tuv.x,1.-tuv.x),min(tuv.y,1.-tuv.y)));
     ink = tatBlur(cuv, rTex, lod) * inBox * edge;
-    float hr = 2.4/mmPerTex; // ~2.4 mm inflammation halo
-    float hl = log2(hr*1024.*.7);
-    halo = (textureLod(uTat, cuv, hl).a*.5 + textureLod(uTat, cuv+vec2(hr*.5,0.), hl).a*.25 + textureLod(uTat, cuv-vec2(hr*.5,0.), hl).a*.25) * edge;
+    float ink0a = ink.a;
+    float hr = 5./mmPerTex; // inflammation reaches a few mm past the needle work
+    float hl = log2(hr*1024.*.5);
+    halo = textureLod(uTat, cuv, hl).a*.3;
+    for(int k=0;k<7;k++){ float an=float(k)*.8976; halo += textureLod(uTat, cuv+vec2(cos(an),sin(an))*hr, hl).a*.1; }
+    halo = smoothstep(0.,.6,halo)*.85 + smoothstep(.05,.5,ink0a)*.15;
   }
   ink *= uReveal; halo *= uReveal;
 
   // swelling: raised skin around fresh lines
   hgt += halo*fresh*.09 + ink.a*fresh*.04 - ink.a*healing*.01;
   // flakes during healing
-  float flakeN = vn(o*vec3(9.,3.,9.)+3.7);
-  float flake = smoothstep(.62,.7,flakeN)*smoothstep(.05,.3,ink.a+halo*.4)*healing;
-  hgt += flake*.02;
+  float flakeN = vn(o*vec3(26.,10.,26.)+3.7)*.7 + vn(o*vec3(60.,30.,60.))*.3;
+  float flake = smoothstep(.6,.66,flakeN)*smoothstep(.1,.5,ink.a)*healing;
+  hgt += flake*.012;
 
   // bump mapping from screen-space derivatives (Mikkelsen)
   vec3 dpx = dFdx(vW), dpy = dFdy(vW);
@@ -282,12 +285,14 @@ void main(){
   tinted = mix(tinted, alb*mix(vec3(1.),trans,.5)*vec3(.8,.9,1.), veil*cov);
   // fresh ink looks inky-wet; healing ink looks "milky" under the new skin layer
   tinted = mix(tinted, tinted*.9, fresh*a);
-  tinted = mix(tinted, mix(tinted, alb*.8+vec3(.06), .32*a), healing);
+  tinted = mix(tinted, mix(tinted, alb*.85+vec3(.035), .2*a), healing);
   alb = tinted;
   // fresh redness halo
-  alb = mix(alb, alb*vec3(1.12,.62,.58), clamp(halo*1.6,0.,1.)*fresh*.85);
-  alb = mix(alb, alb*vec3(1.06,.85,.82), clamp(halo*1.6,0.,1.)*healing*.35);
-  alb = mix(alb, mix(alb, vec3(.72,.66,.6)*base*1.25, .7), flake*.75);
+  float red0 = clamp(halo*1.3,0.,1.)*fresh;
+  alb = mix(alb, alb*vec3(1.05,.42,.36), red0);
+  alb = mix(alb, alb*vec3(1.05,.75,.7), smoothstep(0.,.25,halo)*fresh*.45);
+  alb = mix(alb, alb*vec3(1.08,.82,.78), halo*healing*.4);
+  alb = mix(alb, mix(alb, base*vec3(.95,.9,.86), .55), flake*.6);
 
   // ----- hair: short strands following the limb axis -----
   float hairA = 0.;
@@ -312,10 +317,10 @@ void main(){
   // ----- lighting: wrap diffuse with per-channel scatter (SSS approx) + dual-lobe GGX -----
   vec3 L = normalize(uKeyDir);
   float ndl = dot(Nb,L);
-  vec3 wrap = vec3(.62,.3,.22);
+  vec3 wrap = vec3(.55,.3,.24);
   vec3 diff = clamp((vec3(ndl)+wrap)/(1.+wrap),0.,1.);
   diff = diff*diff*(3.-2.*diff)*.25 + diff*.75;
-  vec3 keyC = vec3(1.0,.88,.76)*1.4;
+  vec3 keyC = vec3(1.0,.9,.8)*1.4;
   vec3 hemi = mix(vec3(.16,.13,.11), vec3(.24,.26,.30), Nb.y*.5+.5);
   vec3 bounce = vec3(.25,.16,.11)*max(0.,-Nb.y)*.6;
   float rimN = max(0.,dot(Nb,normalize(uRimDir)));
@@ -327,7 +332,7 @@ void main(){
   // specular
   vec3 H = normalize(L+V);
   float nh = max(dot(Nb,H),0.), nv=max(dot(Nb,V),1e-3), nl=max(ndl,0.);
-  float rough = mix(.48,.17,fresh*clamp(halo*2.+a,0.,1.));
+  float rough = mix(.48,.2,fresh*clamp(halo*.6+a,0.,1.));
   rough = mix(rough,.75,healing*clamp(halo*2.,0.,1.));
   float a2 = rough*rough*rough*rough;
   float D = a2/(3.14159*pow(nh*nh*(a2-1.)+1.,2.));
@@ -336,10 +341,12 @@ void main(){
   float spec = D*F*G*nl;
   float a22 = .35*.35*.35*.35; float D2 = a22/(3.14159*pow(nh*nh*(a22-1.)+1.,2.));
   spec = spec*.55 + D2*F*G*nl*.35;
-  float wet = 1.+fresh*clamp(halo*2.5+a*2.,0.,1.)*2.2;
+  float wet = 1.+fresh*clamp(a*1.5+halo*.4,0.,1.)*1.6;
   float oil = .7+.6*vn(o*2.3);
   col += keyC*spec*oil*wet*(1.-hairA)*(1.-flake*.8);
   col += fres*vec3(.08,.085,.09)*.35;
+  // inflamed skin: blood flush tints every lighting term
+  col *= mix(vec3(1.), vec3(1.,.62,.56), red0*.65);
   // hair over skin
   vec3 hairC = mix(vec3(.05,.035,.025), toLin(uSkin)*.35, .25);
   col = mix(col, hairC*(keyC*.25*max(ndl,0.)+hemi) + keyC*.08*pow(nh,24.), hairA);
@@ -362,9 +369,9 @@ void main(){
     float wire = (1.-smoothstep(.0,.05,min(gf.x,gf.y)*.55/max(px*1.5,.001)));
     ova = max(ova, wire*.25*uLock); ov = vec3(.95,.92,.85);
   }
-  vec3 outc = aces(col*1.0);
+  vec3 outc = aces(col*.82);
   outc = pow(outc, vec3(1./2.2));
-  outc = mix(vec3(lum(outc)), outc, 1.12);
+  outc = mix(vec3(lum(outc)), outc, 1.03);
   outc = mix(outc, ov, clamp(ova,0.,1.)*.8);
   if(uEdit>0.){
     vec2 e = abs(tuv-.5);

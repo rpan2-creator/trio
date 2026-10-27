@@ -71,7 +71,7 @@ const ACH = [
   { id: 'lvl10', n: 'All grown', d: 'Reach level 10', ic: 'star', l: '#e7e0ff', test: s => s.level >= 10 },
   { id: 'games5', n: 'Gamer', d: 'Play 5 mini-games', ic: 'pad', l: '#d3f7e6', test: s => s.stats.games >= 5 },
   { id: 'star3', n: 'Superstar', d: 'Get 3 stars in a game', ic: 'star', l: '#fff1c2', test: s => s.stats.threeStars >= 1 },
-  { id: 'decor', n: 'Interior designer', d: 'Place 3 furniture items', ic: 'sofa', l: '#ffe6cc', test: s => s.room.items.length >= 3 },
+  { id: 'decor', n: 'Interior designer', d: 'Place 3 furniture items', ic: 'sofa', l: '#ffe6cc', test: s => (s.stats.placed || 0) >= 3 },
   { id: 'dress', n: 'Fashionista', d: 'Own 5 outfits', ic: 'hat', l: '#e7e0ff', test: s => Object.keys(s.inv.outfits).length >= 5 },
   { id: 'memory', n: 'Remember me', d: 'Save a memory', ic: 'note', l: '#d8eeff', test: s => s.memories.length >= 1 },
   { id: 'streak3', n: 'Regular', d: '3-day visit streak', ic: 'fire', l: '#ffe6cc', test: s => s.streak.count >= 3 },
@@ -209,12 +209,17 @@ const IURL = {};
 function itemURL(id, scale) { const k = id + (scale || 3); if (IURL[k]) return IURL[k]; const c = E.itemCanvas(id); const s = scale || 3; const b = document.createElement('canvas'); b.width = c.width * s; b.height = c.height * s; const x = b.getContext('2d'); x.imageSmoothingEnabled = false; x.drawImage(c, 0, 0, b.width, b.height); return (IURL[k] = b.toDataURL()); }
 function outfitURL(o) {
   const k = 'o:' + o.id; if (IURL[k]) return IURL[k];
-  // render the outfit on an invisible "mannequin" (only the outfit pixels survive)
+  // render a mannequin with and without the outfit, keep only the pixels the outfit changed
   const g = { body: 'chibi', head: 'round', ears: 'none', tail: 'none', wings: 'none', pattern: 'none', eyes: 'dot', mouth: 'smile', extra: 'none', hair: 'none', colors: { base: '#f3ecff', belly: '#f3ecff' }, cheeks: false };
-  const c = E.renderPet(g, { outfit: { [o.slot]: o.key }, eyes: o.slot === 'glasses' ? 'blink' : 'open' }, 1);
-  const crop = { hat: [12, 0, 40, 30], glasses: [14, 18, 36, 20], neck: [14, 34, 36, 22] }[o.slot];
-  const b = document.createElement('canvas'); b.width = crop[2] * 3; b.height = crop[3] * 3; const x = b.getContext('2d'); x.imageSmoothingEnabled = false; x.drawImage(c, crop[0], crop[1], crop[2], crop[3], 0, 0, b.width, b.height);
-  return (IURL[k] = b.toDataURL());
+  const a = E.renderPet(g, { outfit: {} }, 1).getContext('2d').getImageData(0, 0, 64, 64).data;
+  const bC = E.renderPet(g, { outfit: { [o.slot]: o.key } }, 1); const bd = bC.getContext('2d').getImageData(0, 0, 64, 64);
+  let x0 = 64, y0 = 64, x1 = 0, y1 = 0;
+  for (let i = 0; i < 64 * 64; i++) { const j = i * 4; const same = a[j] === bd.data[j] && a[j + 1] === bd.data[j + 1] && a[j + 2] === bd.data[j + 2] && a[j + 3] === bd.data[j + 3]; if (same || !bd.data[j + 3]) { bd.data[j + 3] = 0; continue; } const x = i % 64, y = (i / 64) | 0; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  const t = document.createElement('canvas'); t.width = 64; t.height = 64; t.getContext('2d').putImageData(bd, 0, 0);
+  const w = x1 - x0 + 3, h = y1 - y0 + 3, side = Math.max(w, h, 16);
+  const c = document.createElement('canvas'); c.width = side * 4; c.height = side * 4; const x = c.getContext('2d'); x.imageSmoothingEnabled = false;
+  x.drawImage(t, x0 - 1, y0 - 1, w, h, Math.floor((side - w) / 2) * 4, Math.floor((side - h) / 2) * 4, w * 4, h * 4);
+  return (IURL[k] = c.toDataURL());
 }
 const SVG = {
   x: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>',
@@ -278,17 +283,24 @@ function say(msg) { const sr = document.getElementById('sr'); if (sr) { sr.textC
 let toastT = 0;
 function toast(msg, iconName) { $$('.toast', APP).forEach(t => t.remove()); const t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); t.innerHTML = (iconName ? ic(iconName) : '') + '<span>' + esc(msg) + '</span>'; APP.appendChild(t); clearTimeout(toastT); toastT = setTimeout(() => t.remove(), 2600); }
 function petCanvas(st, scale, g) { const c = E.renderPet(g || S.pet.genome, Object.assign({ stage: S ? stageFor(S.level) : 'baby', outfit: S ? S.wear : {} }, st || {}), 1); const b = document.createElement('canvas'); b.width = 64 * (scale || 4); b.height = 64 * (scale || 4); b.className = 'px'; const x = b.getContext('2d'); x.imageSmoothingEnabled = false; x.drawImage(c, 0, 0, b.width, b.height); return b; }
+function petHead(size, st) {
+  const g = S.pet.genome, stage = stageFor(S.level); const an = E.anchors(g, { stage });
+  const spr = E.renderPet(g, Object.assign({ stage, outfit: S.wear }, st || {}), 1);
+  const span = Math.max(30, an.hrx * 2 + 10); const cy = an.hy - 2; const sx = 32 - span / 2, sy = cy - span / 2;
+  const b = document.createElement('canvas'); b.width = size * 2; b.height = size * 2; b.className = 'px'; b.style.width = b.style.height = size + 'px';
+  const x = b.getContext('2d'); x.imageSmoothingEnabled = false; x.drawImage(spr, sx, sy, span, span, 0, 0, b.width, b.height); return b;
+}
 function petURL(st, scale, g) { return petCanvas(st, scale, g).toDataURL(); }
 function sheet(html, o) {
   o = o || {};
   const ov = document.createElement('div'); ov.className = 'ov'; ov.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(o.label || '')}"><div class="grab" aria-hidden="true"></div>${html}</div>`;
   APP.appendChild(ov); const prev = document.activeElement;
-  const close = () => { if (ov.classList.contains('closing')) return; ov.classList.add('closing'); setTimeout(() => { ov.remove(); o.onClose && o.onClose(); if (prev && prev.focus && prev.isConnected) prev.focus(); }, 190); };
+  const close = () => { if (ov.classList.contains('closing')) return; ov.classList.add('closing'); setTimeout(() => { ov.remove(); o.onClose && o.onClose(); if (prev && prev.focus && prev.isConnected) prev.focus({ preventScroll: true }); }, 190); };
   ov.addEventListener('click', e => { if (e.target === ov) close(); });
   ov.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
   $$('[data-close]', ov).forEach(b => b.onclick = () => { sfx('tap'); close(); });
   if (o.height) $('.sheet', ov).style.height = o.height;
-  setTimeout(() => { const f = $('[autofocus]', ov) || $('.x', ov); f && f.focus(); }, 60);
+  setTimeout(() => { const f = $('[autofocus]', ov) || $('.x', ov); f && f.focus({ preventScroll: true }); }, 60);
   ov.close = close; return ov;
 }
 const sheetHead = (t, extra) => `<div class="sheet-h"><h2>${t}</h2>${extra || ''}<button class="x" data-close aria-label="Close">${SVG.x}</button></div>`;
@@ -299,7 +311,7 @@ function modal(html, o) {
   if (o.dismiss !== false) ov.addEventListener('click', e => { if (e.target === ov) close(); });
   ov.addEventListener('keydown', e => { if (e.key === 'Escape' && o.dismiss !== false) close(); });
   $$('[data-close]', ov).forEach(b => b.onclick = () => { sfx('tap'); close(); });
-  setTimeout(() => { const f = $('.btn', ov); f && f.focus(); }, 80);
+  setTimeout(() => { const f = $('.btn', ov); f && f.focus({ preventScroll: true }); }, 80);
   ov.close = close; return ov;
 }
 function confirmBox(title, text, okLabel, danger) {
@@ -453,7 +465,7 @@ function obHatch(style) {
   };
   egg.focus({ preventScroll: true });
   function reveal() {
-    sfx('hatch'); buzz([30, 50, 30]); const [x, y] = elCenter(egg); confetti(x, y, 80, 1.1); burst(x, y, 'star', 14, { sc: 4 });
+    sfx('hatch'); buzz([30, 50, 30]); const [x, y] = elCenter(egg); confetti(x, y, 80, 1.1); burst(x, y - 120, 'sparkle', 10, { sc: 3, up: true });
     $('.rays', s).style.opacity = 1; $('.rays', s).style.transition = 'opacity .5s';
     egg.remove();
     const pc = petCanvas({ eyes: 'happy', mouth: 'open', arm: 'both', stage: 'adult' }, 4, Object.assign({}, genome)); pc.className = 'reveal-pet px'; pc.style.position = 'relative'; $('.egg-stage', s).appendChild(pc);
@@ -542,7 +554,7 @@ function obNaming() {
   $$('[data-hb]', s).forEach(b => b.onclick = () => { sfx('tap'); const h = b.dataset.hb; OB.habits = OB.habits.includes(h) ? OB.habits.filter(x => x !== h) : OB.habits.concat(h); b.setAttribute('aria-pressed', OB.habits.includes(h)); });
   const bio = $('#bio', s); if (bio) bio.oninput = () => OB.bio = bio.value;
   $('[data-next]', s).onclick = () => {
-    OB.name = nm.value.trim(); if (!OB.name) { nm.focus(); nm.animate([{ transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'none' }], { duration: 250 }); toast('Every pet needs a name!'); sfx('bad'); return; }
+    OB.name = nm.value.trim(); if (!OB.name) { nm.focus({ preventScroll: true }); nm.animate([{ transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'none' }], { duration: 250 }); toast('Every pet needs a name!'); sfx('bad'); return; }
     sfx('pop'); obMeet();
   };
   $('[data-back]', s).onclick = () => { if (OB.path === 'egg') obEggPick(); else obEditor('colors'); };
@@ -602,6 +614,7 @@ function importBackup() {
 /* ============================== BOOT ============================== */
 function boot() {
   fxEnsure();
+  [APP, APP.parentElement].forEach(el => el && el.addEventListener('scroll', () => { el.scrollTop = 0; el.scrollLeft = 0; }));
   S = load();
   if (S) { document.documentElement.classList.toggle('pip-rm', !!S.settings.rm); APP.classList.toggle('rm', !!S.settings.rm); ensureQuests(); tickNeeds(true); goMain('home'); }
   else obWelcome();

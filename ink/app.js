@@ -73,12 +73,12 @@ const ico = (n, cls) => `<svg viewBox="0 0 24 24" aria-hidden="true" ${cls ? `cl
 
 /* ================= skin + model constants ================= */
 const SKINS = [
-  { id: 'I', rgb: [0.93, 0.78, 0.69], hex: '#efd4c4', frk: .55 },
-  { id: 'II', rgb: [0.88, 0.69, 0.57], hex: '#e2b89c', frk: .3 },
-  { id: 'III', rgb: [0.79, 0.57, 0.43], hex: '#c8956f', frk: .12 },
-  { id: 'IV', rgb: [0.64, 0.43, 0.30], hex: '#a3714f', frk: 0 },
-  { id: 'V', rgb: [0.45, 0.29, 0.19], hex: '#734b31', frk: 0 },
-  { id: 'VI', rgb: [0.27, 0.17, 0.115], hex: '#45302a', frk: 0 }
+  { id: 'I', rgb: [0.92, 0.79, 0.72], hex: '#f0d9cb', frk: .55 },
+  { id: 'II', rgb: [0.87, 0.71, 0.61], hex: '#e3bea6', frk: .3 },
+  { id: 'III', rgb: [0.77, 0.59, 0.47], hex: '#c99a7c', frk: .12 },
+  { id: 'IV', rgb: [0.62, 0.45, 0.34], hex: '#a37658', frk: 0 },
+  { id: 'V', rgb: [0.44, 0.31, 0.235], hex: '#74503b', frk: 0 },
+  { id: 'VI', rgb: [0.27, 0.19, 0.15], hex: '#47322a', frk: 0 }
 ];
 const STOPS = [
   { days: 0, label: 'Fresh', sub: 'Day 0', big: 'Fresh', note: '<b>Day 0 — an open wound.</b> Redness and slight swelling ring the lines; plasma and excess ink leave a glossy sheen. Lines look their sharpest and darkest right now.' },
@@ -425,9 +425,9 @@ function viewBuilder(editId) {
   const svgURL = s => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s);
   function tiles() {
     $('#motifs', v).innerHTML = D.MOTIFS.map(m => tile(m.id, m.label, svgURL(D.buildSVG({ motif: m.id, frame: 'none', mode: bspec.mode })), bspec.motif === m.id)).join('');
-    $('#frames', v).innerHTML = D.FRAMES.map(f => tile(f.id, f.label, f.id === 'none' ? null : svgURL(D.buildSVG({ motif: '__', frame: f.id, mode: bspec.mode, bannerText: 'TEXT' }).replace(/<g transform="translate\(300 300\) scale\([\d.]+\) translate\(-300 -300\)">[\s\S]*?<\/g>(?=<)/, '')), bspec.frame === f.id)).join('');
+    $('#frames', v).innerHTML = D.FRAMES.map(f => tile(f.id, f.label, f.id === 'none' ? null : svgURL(D.buildSVG({ motif: 'none', frame: f.id, mode: bspec.mode, bannerText: 'TEXT' })), bspec.frame === f.id)).join('');
     $('#accents', v).innerHTML = D.ACCENTS.map(a => `<button class="tile" data-v="${a.id}" aria-pressed="${bspec.accents.includes(a.id)}"><span class="tbox"><img src="${svgURL(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 600'>${'' }</svg>`)}" data-acc="${a.id}" alt=""></span>${a.label}</button>`).join('');
-    $$('#accents img', v).forEach(img => { img.src = svgURL(D.buildSVG({ motif: '__none', frame: 'none', accents: [img.dataset.acc], mode: bspec.mode }).replace(/<g transform="translate\(300 300\)[^>]*>[\s\S]*?<\/g>/, '')); });
+    $$('#accents img', v).forEach(img => { img.src = svgURL(D.buildSVG({ motif: 'none', frame: 'none', accents: [img.dataset.acc], mode: bspec.mode })); });
     $('#frames .tile[data-v=none] .tbox', v).classList.add('dark');
     bind();
   }

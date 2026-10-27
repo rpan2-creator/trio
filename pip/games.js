@@ -15,7 +15,7 @@ function startGame(id) {
   const hero = petCanvas({ eyes: 'happy', mouth: 'open', arm: 'both' }, 3); hero.className = 'hero px'; $('[data-hero]', g).replaceWith(hero);
   $('[data-go]', g).onclick = () => { sfx('pop'); countdown(g, () => (id === 'catch' ? gCatch : id === 'match' ? gMatch : gBubble)(g, d)); };
   $('[data-quit]', g).onclick = () => quitGame(g);
-  setTimeout(() => $('[data-go]', g).focus(), 100);
+  setTimeout(() => $('[data-go]', g).focus({ preventScroll: true }), 100);
 }
 function quitGame(g) { if (GAME && GAME.stop) GAME.stop(); GAME = null; g.remove(); HOME && HOME.resume(); window.Frame && Frame.tone('dark'); const p = $('#page'); if (p && !p.hidden && TAB === 'play') renderPlay(p); }
 function countdown(g, go) {
@@ -48,7 +48,7 @@ function endGame(g, id, score, extraLine) {
   setTimeout(() => addXP(xp), 400); checkAch();
   $('[data-again]', p).onclick = () => { sfx('pop'); g.innerHTML = ''; countdown(g, () => (id === 'catch' ? gCatch : id === 'match' ? gMatch : gBubble)(g, d)); };
   $('[data-done]', p).onclick = () => { sfx('tap'); quitGame(g); };
-  setTimeout(() => $('[data-again]', p).focus(), 100);
+  setTimeout(() => $('[data-again]', p).focus({ preventScroll: true }), 100);
   say(`Game over. Score ${score}. ${stars} stars. Earned ${coins} coins.`);
 }
 
@@ -141,7 +141,7 @@ function gMatch(g, d) {
       else { setTimeout(() => { a.classList.add('miss'); b.classList.add('miss'); sfx('bad'); miss++; ms.textContent = miss; setPet({ eyes: 'dizzy', mouth: 'o', arm: 'both' }); }, 450); setTimeout(() => { a.classList.remove('up', 'miss'); b.classList.remove('up', 'miss'); a.setAttribute('aria-label', 'Card ' + (+a.dataset.i + 1) + ', face down'); b.setAttribute('aria-label', 'Card ' + (+b.dataset.i + 1) + ', face down'); open = []; lock = false; setPet({ eyes: 'open', arm: 'both' }); }, 1000); }
     }
   });
-  setTimeout(() => $('.mm-card', grid).focus(), 50);
+  setTimeout(() => $('.mm-card', grid).focus({ preventScroll: true }), 50);
   let ended = false;
   function finish() { if (ended) return; ended = true; clearInterval(timer); const final = score + (found === 8 ? Math.max(0, t) + Math.max(0, 20 - miss * 2) : 0); setTimeout(() => { g.style.background = ''; endGame(g, 'match', final, `${found}/8 pairs`); }, 600); }
 }

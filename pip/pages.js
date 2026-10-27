@@ -54,7 +54,7 @@ function renderShop(page) {
   page.innerHTML = `<div class="page-h"><h1>Shop</h1><button class="pill" id="coinPill" aria-label="${S.coins} coins">${ic('coin')}<span id="hcoins">${S.coins}</span></button></div>
     <div class="shop-banner"><span data-sb></span><div><h3>Earned, never bought</h3><p>Every coin comes from caring and playing. No real money, no loot boxes, no timers.</p></div></div>
     <div class="cats" role="tablist" aria-label="Shop categories">${SHOP_CATS.map(([k, n, i]) => `<button role="tab" data-cat="${k}" aria-selected="${k === SHOPCAT}">${ic(i)}${n}</button>`).join('')}</div>
-    <div class="shop-grid">${items.map(it => { const has = it.owned > 0 && !it.multi; const can = S.coins >= it.price; return `<button class="sitem" data-buy="${it.id}" aria-label="${esc(it.name)}, ${has ? 'owned' : it.price + ' coins'}${it.multi && it.owned ? ', you have ' + it.owned : ''}">${it.multi && it.owned ? `<span class="own">×${it.owned}</span>` : ''}${it.tag === 'fav' ? '<span class="own" style="left:auto;right:8px">💖</span>' : ''}<span class="art">${it.img ? `<img src="${it.img}" alt="" class="pxi">` : `<span style="width:56px;height:46px;border-radius:12px;display:block;background:${it.sw.a};box-shadow:inset 0 0 0 4px ${it.sw.b},0 3px 0 rgba(58,42,90,.15)"></span>`}</span><span class="nm">${esc(it.name)}</span>${has ? '<span class="price owned">Owned ✓</span>' : `<span class="price ${can ? '' : 'cant'}">${ic('coin')}${it.price}</span>`}</button>`; }).join('')}</div>
+    <div class="shop-grid">${items.map(it => { const has = it.owned > 0 && !it.multi; const can = S.coins >= it.price; return `<button class="sitem" data-buy="${it.id}" aria-label="${esc(it.name)}, ${has ? 'owned' : it.price + ' coins'}${it.multi && it.owned ? ', you have ' + it.owned : ''}">${it.multi && it.owned ? `<span class="own">×${it.owned}</span>` : ''}${it.tag === 'fav' ? '<span class="own" style="left:auto;right:8px">💖</span>' : ''}<span class="art">${it.img ? `<img src="${it.img}" alt="" class="pxi ${SHOPCAT === 'outfits' ? 'o' : ''}">` : `<span style="width:56px;height:46px;border-radius:12px;display:block;background:${it.sw.a};box-shadow:inset 0 0 0 4px ${it.sw.b},0 3px 0 rgba(58,42,90,.15)"></span>`}</span><span class="nm">${esc(it.name)}</span>${has ? '<span class="price owned">Owned ✓</span>' : `<span class="price ${can ? '' : 'cant'}">${ic('coin')}${it.price}</span>`}</button>`; }).join('')}</div>
     <p class="fineprint">${SHOPCAT === 'furn' ? 'Place furniture from Home → Decorate.' : SHOPCAT === 'outfits' ? 'Try outfits on from Home → Dress.' : SHOPCAT === 'room' ? 'Switch walls and floors from Home → Decorate.' : 'Feed snacks from Home → Feed. Every pet has a secret favorite!'}</p>`;
   $('[data-sb]', page).appendChild(petCanvas({ eyes: 'happy', arm: 'raise' }, 1.25));
   $$('[data-cat]', page).forEach(b => b.onclick = () => { sfx('tap'); SHOPCAT = b.dataset.cat; renderShop(page); });
@@ -95,7 +95,7 @@ function renderJournal(page) {
       <div class="kv"><div><b>${S.level}</b><small>Level</small></div><div><b>${S.stats.pets}</b><small>Cuddles</small></div><div><b>${Object.values(S.tricks).filter(t => t.m >= 100).length}</b><small>Tricks</small></div><div><b>${S.stats.feeds}</b><small>Snacks</small></div><div><b>${S.stats.games}</b><small>Games</small></div><div><b>${S.stats.baths}</b><small>Baths</small></div></div>
       <div class="traits">${p.knownFav ? `<span class="trait f">💖 Loves ${esc(E.ITEMS[p.fav].name.toLowerCase())}</span>` : '<span class="trait n">💖 Favorite food: ??? (keep feeding!)</span>'}${p.knownDislike ? `<span class="trait n">🙅 Not a fan of ${esc(E.ITEMS[p.dislike].name.toLowerCase())}</span>` : ''}${p.habits.map(h => `<span class="trait">${esc(h)}</span>`).join('')}</div>
       ${p.bio ? `<p style="font-size:13.5px;color:var(--ink2);margin-top:10px;line-height:1.4">“${esc(p.bio)}”</p>` : ''}
-      <div class="btnrow"><button class="btn btn-sm btn-mint" data-look>${SVG.edit.replace('<svg', '<svg style="width:18px;height:18px;stroke:#fff;fill:none;stroke-width:2.6"')}Edit look</button><button class="btn btn-sm btn-sky" data-about>Edit details</button><button class="btn btn-sm btn-yellow" data-photo>Photo</button></div></div></div>
+      <div class="btnrow"><button class="btn btn-sm btn-mint" data-look>Edit look</button><button class="btn btn-sm btn-sky" data-about>Details</button><button class="btn btn-sm btn-yellow" data-photo>Photo</button></div></div></div>
       ${p.mode === 'real' ? '<div class="notice pink" style="margin-top:14px"><span>💗</span><span>This is a fictional companion inspired by your pet. It can\'t sense or report how your real pet is doing — for that, check in with whoever looks after them.</span></div>' : ''}`;
     const st = $('.stagebg', jb); const c = petCanvas({ eyes: 'happy' }, 4); c.style.cssText = 'width:256px;height:256px;margin-top:-20px;animation:parade 1.6s ease-in-out infinite'; st.appendChild(c);
     $('[data-look]', jb).onclick = () => { sfx('pop'); HOME && HOME.destroy(); obEditor('species', { edit: true }); };
@@ -158,7 +158,7 @@ function openWardrobe() {
   const prev = () => { const w = $('#wp', sh); w.innerHTML = ''; const c = petCanvas({ eyes: 'happy', mouth: 'smile' }, 3.5); c.style.cssText = 'width:224px;height:224px;margin-top:-24px'; w.appendChild(c); };
   const grid = () => {
     const g = $('#wg', sh); const list = OUTFITS.filter(o => o.slot === slot);
-    g.innerHTML = `<button class="opt" data-o="" aria-pressed="${!S.wear[slot]}"><span style="height:64px;display:grid;place-items:center;font-size:28px">🚫</span>None</button>` + list.map(o => { const own = S.inv.outfits[o.id]; return `<button class="opt" data-o="${o.id}" aria-pressed="${S.wear[slot] === o.key}" ${own ? '' : 'aria-disabled="true"'} style="${own ? '' : 'opacity:.5'}">${own ? '' : '<span class="lock">🔒</span>'}<img src="${outfitURL(o)}" alt="" style="height:64px;max-width:76px;object-fit:contain">${o.name}</button>`; }).join('');
+    g.innerHTML = `<button class="opt" data-o="" aria-pressed="${!S.wear[slot]}"><span style="height:64px;display:grid;place-items:center;font-size:28px">🚫</span>None</button>` + list.map(o => { const own = S.inv.outfits[o.id]; return `<button class="opt" data-o="${o.id}" aria-pressed="${S.wear[slot] === o.key}" ${own ? '' : 'aria-disabled="true"'} style="${own ? '' : 'opacity:.5'}">${own ? '' : '<span class="lock">🔒</span>'}<img src="${outfitURL(o)}" alt="" style="width:56px;height:56px;margin:4px 0">${o.name}</button>`; }).join('');
     $$('[data-o]', g).forEach(b => b.onclick = () => {
       const o = OUTFITS.find(x => x.id === b.dataset.o);
       if (o && !S.inv.outfits[o.id]) { toast(`${o.name} is in the Shop for ${o.price} coins`, 'bag'); sfx('bad'); return; }
@@ -215,7 +215,7 @@ function openTrainer(trickId) {
   $('[data-cmd]', sh).onclick = () => { if (running) hit(); else if (round >= 3) restart(); };
   sh.addEventListener('keydown', e => { if (e.code === 'Space' && e.target.tagName !== 'BUTTON') { e.preventDefault(); $('[data-cmd]', sh).click(); } });
   $$('[data-t]', sh).forEach(b => b.onclick = () => { cur = b.dataset.t; $$('[data-t]', sh).forEach(x => x.setAttribute('aria-selected', x === b)); sfx('tap'); restart(); });
-  setTimeout(() => { $('[data-cmd]', sh).focus(); setup(); }, 300);
+  setTimeout(() => { $('[data-cmd]', sh).focus({ preventScroll: true }); setup(); }, 300);
 }
 
 /* ============================== TALK ============================== */
@@ -228,7 +228,7 @@ function openTalk(prefill) {
     <div class="sheet-f"><div class="qp-row">${['How was your day?', 'Want to play?', 'I missed you!', 'Tell me a secret'].map(q => `<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
     <div id="voicebox"></div>
     <div class="composer"><label class="sr-only" for="say">Message to ${esc(p.name)}</label><textarea id="say" class="inp" rows="1" maxlength="500" placeholder="Say something…">${esc(prefill || '')}</textarea><button class="iconbtn" data-mic aria-label="Speak instead">${SVG.mic}</button><button class="btn btn-sky" data-send aria-label="Send" style="min-width:52px;padding:0 14px;min-height:48px"><svg viewBox="0 0 24 24" style="width:20px;height:20px;stroke:#fff;fill:none;stroke-width:2.6;stroke-linejoin:round" aria-hidden="true"><path d="M4 12l16-8-6 16-3-7z"/></svg></button></div></div>`, { label: 'Talk', height: '90%', onClose: () => { if (aiCtl) aiCtl.abort(); } });
-  $('#cav', sh).appendChild(petCanvas({ eyes: 'happy' }, 1.2));
+  $('#cav', sh).appendChild(petHead(52, { eyes: 'happy' }));
   paintMsgs(sh);
   const ta = $('#say', sh);
   ta.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('[data-send]', sh).click(); } };
@@ -236,7 +236,7 @@ function openTalk(prefill) {
   $$('[data-q]', sh).forEach(b => b.onclick = () => { if (talkBusy) return; send(sh, b.dataset.q); });
   $('[data-mem]', sh).onclick = () => { sh.close(); JTAB = 'memories'; switchTab('pet'); };
   $('[data-mic]', sh).onclick = () => voice(sh);
-  setTimeout(() => ta.focus(), 350);
+  setTimeout(() => ta.focus({ preventScroll: true }), 350);
 }
 function paintMsgs(sh) {
   const box = $('#msgs', sh); if (!box) return; const p = S.pet;

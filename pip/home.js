@@ -54,7 +54,7 @@ function updateHud() {
   $('#hcoins').textContent = S.coins;
   const need = xpNeed(S.level); $('#hxp').style.width = (100 * S.xp / need) + '%'; $('#hxpt').textContent = `Lv ${S.level}`;
   const av = $('#hav'); const key = JSON.stringify([S.pet.genome, S.level, S.wear]);
-  if (av.dataset.k !== key) { av.dataset.k = key; av.innerHTML = ''; av.appendChild(petCanvas({}, 1)); av.insertAdjacentHTML('beforeend', `<span class="lvl">${S.level}</span>`); }
+  if (av.dataset.k !== key) { av.dataset.k = key; av.innerHTML = ''; av.appendChild(petHead(44)); av.insertAdjacentHTML('beforeend', `<span class="lvl">${S.level}</span>`); }
   else $('.lvl', av).textContent = S.level;
   for (const n of NEEDS) { const b = $(`[data-need="${n.k}"]`); if (!b) continue; const v = Math.round(S.needs[n.k]); $('i', b).style.width = v + '%'; b.classList.toggle('low', v < 30); b.setAttribute('aria-label', `${n.n} ${v}%`); }
   const m = mood(); const mp = $('#moodPill'); if (mp) { mp.innerHTML = `${ic(m.e)}<span>${m.n}</span>`; }
@@ -68,7 +68,7 @@ function updateBadges() {
 /* ============================== ROOM ============================== */
 function makeHome(scr) {
   const room = $('#room', scr), cv = $('#rc', scr), ctx = cv.getContext('2d'), rui = $('#rui', scr), dark = $('#dark', scr);
-  let W = 0, H = 0, dpr = 1, groundY = 0, floorCss = 0, LW = 0, LH = 0, bg = null, bgT = 0, roomInfo = null;
+  let W = 0, H = 0, dpr = 1, groundY = 0, baseGround = 0, petGround = 0, petGroundT = 0, floorCss = 0, LW = 0, LH = 0, bg = null, bgT = 0, roomInfo = null;
   const P = { x: 0, y: 0, face: 1, state: 'idle', t: 0, next: 2, target: null, onArrive: null, speed: 95, hop: 0, hopV: 0, blink: 3, blinkOn: 0, walkT: 0, walkF: 0, face2: null, faceT: 0, mouth: null, arm: null, emote: null, holding: null, wagT: 0, look: 0, squash: 0, spin: 0, jitter: 0, lastPoke: 0, pokes: 0 };
   const parts = []; // room particles
   const bubblesOn = []; // bath bubbles stuck to pet (relative)
@@ -79,13 +79,12 @@ function makeHome(scr) {
   function layout() {
     W = APP.clientWidth; H = APP.clientHeight; dpr = Math.min(3, window.devicePixelRatio || 1);
     cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); cv.style.width = W + 'px'; cv.style.height = H + 'px'; room.style.height = H + 'px';
-    const dock = $('#dock', scr); const dr = dock.getBoundingClientRect(), ar = APP.getBoundingClientRect(); const sc = ar.width / W;
-    const dockTop = (dr.top - ar.top) / sc;
-    groundY = Math.round(dockTop - 12);
+    const dock = $('#dock', scr); const dockTop = dock.offsetTop || (H - 200);
+    groundY = baseGround = Math.round(dockTop - 12); if (!petGroundT) petGroundT = groundY; petGround = petGround || groundY;
     floorCss = Math.round((groundY - 200) / K) * K;
     LW = Math.ceil(W / K) + 4; LH = Math.ceil(H / K);
     if (!P.x) P.x = W / 2;
-    P.y = groundY; bg = null;
+    P.y = petGround; bg = null;
   }
   function stTop() { const v = parseFloat(getComputedStyle(APP).getPropertyValue('--safe-top')); return isNaN(v) ? 54 : v; }
   function renderBg(t) {
@@ -230,6 +229,7 @@ function makeHome(scr) {
     if (P.faceT > 0) { P.faceT -= dt; if (P.faceT <= 0) P.face2 = null; }
     if (P.emote) { P.emote.t += dt; if (P.emote.t > P.emote.d) P.emote = null; }
     if (P.squash > 0) P.squash -= dt;
+    petGround += (petGroundT - petGround) * Math.min(1, dt * 8); P.y = Math.round(petGround);
     if (P.jitter > 0) P.jitter -= dt;
     if (P.spin > 0) { P.spin -= dt; if (P.spin <= 0) P.spin = 0; }
     // blink
@@ -255,7 +255,7 @@ function makeHome(scr) {
     // ball physics
     if (ball && ball.state === 'fly') {
       ball.vy += 1100 * dt; ball.x += ball.vx * dt; ball.y += ball.vy * dt; ball.rot += ball.vx * dt / 20;
-      const floor = groundY - 12; const r = 26;
+      const floor = P.y - 12; const r = 26;
       if (ball.x < r) { ball.x = r; ball.vx = -ball.vx * .7; } if (ball.x > W - r) { ball.x = W - r; ball.vx = -ball.vx * .7; }
       if (ball.y < stTop() + 40) { ball.y = stTop() + 40; ball.vy = Math.abs(ball.vy) * .5; }
       if (ball.y > floor) { ball.y = floor; if (Math.abs(ball.vy) > 140) { ball.vy = -ball.vy * .55; sfx('bounce'); spawnDust(ball.x, floor + 10); } else { ball.vy = 0; } ball.vx *= .82; if (Math.abs(ball.vx) < 15 && ball.vy === 0) { ball.state = 'rest'; ball.vx = 0; } }
@@ -363,13 +363,13 @@ function makeHome(scr) {
   function chaseBall() { if (P.state === 'sleep') return; P.holding = null; P.state = 'fetch'; P.speed = 170; P.target = ball.x; face({ eyes: 'wide', mouth: 'open' }, .8); emote('excl', .8); }
   function fetchDone() {
     P.state = 'react'; P.face = 1; const id = P.holding; P.holding = null; const [mx, my] = mouthPos();
-    ball = { id, x: mx + 30, y: groundY - 12, vx: 60, vy: -200, rot: 0, state: 'fly' };
+    ball = { id, x: mx + 30, y: P.y - 12, vx: 60, vy: -200, rot: 0, state: 'fly' };
     stat('fetches'); bumpNeed('fun', 12); bumpNeedSilent('energy', -2); addXP(6, mx, my - 50); hop(260);
     face({ eyes: 'happy', mouth: 'open' }, 1.4); speak(choice(['Again! Again!', 'Got it!', 'Throw it farther!', 'I\'m so fast!'])); sfx('good');
     if (Math.random() < .35) { const c = 2 + Math.floor(Math.random() * 3); addCoins(c, mx, my - 30); floatText(mx, my - 80, '+' + c, '#e09a12'); }
     setTimeout(() => setIdle(), 900);
   }
-  function throwRandom() { if (!ball) return; ball.state = 'fly'; ball.x = W / 2; ball.y = groundY - 60; ball.vx = (Math.random() < .5 ? -1 : 1) * rand(380, 700); ball.vy = rand(-650, -450); sfx('throw'); chaseBall(); }
+  function throwRandom() { if (!ball) return; ball.state = 'fly'; ball.x = W / 2; ball.y = P.y - 60; ball.vx = (Math.random() < .5 ? -1 : 1) * rand(380, 700); ball.vy = rand(-650, -450); sfx('throw'); chaseBall(); }
   /* ---- bath ---- */
   let scrubP = 0, sponge = null, lastBub = 0;
   function moveSponge(x, y) { if (!sponge) return; sponge.style.left = x + 'px'; sponge.style.top = y + 'px'; }
@@ -433,20 +433,20 @@ function makeHome(scr) {
   function refreshDecorSel() {
     $$('.decor-sel', room).forEach(x => x.remove()); if (!selFurn || mode !== 'decor') return;
     const b = furnBox(selFurn); const d = document.createElement('div'); d.className = 'decor-sel'; d.style.left = ((b.x0 + b.x1) / 2) + 'px'; d.style.top = (b.y0 - 10) + 'px';
-    d.innerHTML = `<button class="btn btn-sm btn-white" data-store>Put away</button>`; room.appendChild(d);
+    d.innerHTML = `<button class="btn btn-sm btn-white" data-store style="white-space:nowrap">Put away</button>`; room.appendChild(d);
     $('[data-store]', d).onclick = () => { S.room.items = S.room.items.filter(i => i !== selFurn); selFurn = null; persist(); sfx('pop'); refreshDecorSel(); decorBar(); };
   }
   function placeFurn(id) {
     const owned = S.inv.furn[id] || 0; const placed = S.room.items.filter(i => i.id === id).length; if (placed >= owned) return;
     const f = E.FURN[id]; const it = { id, x: rand(.25, .75), dy: f.layer === 'wall' ? -(groundY - (stTop() + 260 + f.h * K)) * 1 : f.layer === 'rug' ? 14 : -rand(40, 110) };
     if (f.layer === 'wall') it.dy = clamp((stTop() + 230 + f.h * K) - groundY, (stTop() + 200 + f.h * K) - groundY, -165);
-    S.room.items.push(it); selFurn = it; persist(); sfx('buy'); spawn('sparkle', it.x * W, groundY + it.dy - 20, { vy: -40, life: .8 }); checkAch(); refreshDecorSel(); decorBar();
+    S.room.items.push(it); S.stats.placed = (S.stats.placed || 0) + 1; selFurn = it; persist(); sfx('buy'); spawn('sparkle', it.x * W, groundY + it.dy - 20, { vy: -40, life: .8 }); checkAch(); refreshDecorSel(); decorBar();
   }
   function decorBar() {
     const owned = Object.keys(S.inv.furn).filter(id => S.inv.furn[id] > 0);
-    showBar(`<div class="row"><h3>Decorate</h3><button class="btn btn-sm btn-mint" data-done>Done</button></div><p>Drag furniture to move it. Tap to select & put away.</p>
+    showBar(`<div class="row"><h3>Decorate</h3><button class="btn btn-sm btn-mint" data-done>Done</button></div><p>Drag furniture around the room. Tap one to put it away.</p>
       <div class="tray-row">${owned.length ? owned.map(id => { const left = S.inv.furn[id] - S.room.items.filter(i => i.id === id).length; return `<button class="titem ${left ? '' : 'empty'}" data-place="${id}" aria-label="Place ${E.FURN[id].name}, ${left} left"><img src="${itemURL(id, 2)}" alt="" style="width:auto;max-width:48px;max-height:40px"><span>${E.FURN[id].name.split(' ').pop()}</span>${left ? `<span class="cnt">${left}</span>` : ''}</button>`; }).join('') : '<p style="padding:6px">No furniture yet — buy some in the Shop!</p>'}</div>
-      <div class="tray-row">${Object.keys(S.inv.walls).map(k => `<button class="chip" data-wall="${k}" aria-pressed="${S.room.wall === k}"><i style="width:14px;height:14px;border-radius:5px;background:${E.WALLPAPERS[k].a};box-shadow:inset 0 0 0 2px ${E.WALLPAPERS[k].b}"></i>${E.WALLPAPERS[k].name}</button>`).join('')}${Object.keys(S.inv.floors).map(k => `<button class="chip" data-floor="${k}" aria-pressed="${S.room.floor === k}"><i style="width:14px;height:14px;border-radius:5px;background:${E.FLOORS[k].a}"></i>${E.FLOORS[k].name}</button>`).join('')}</div>`, 'decor');
+      <div class="tray-row">${Object.keys(S.inv.walls).map(k => `<button class="chip" data-wall="${k}" aria-pressed="${S.room.wall === k}"><i style="width:14px;height:14px;border-radius:5px;background:${E.WALLPAPERS[k].a};box-shadow:inset 0 0 0 2px ${E.WALLPAPERS[k].b}"></i>${E.WALLPAPERS[k].name}</button>`).join('')}${Object.keys(S.inv.floors).map(k => `<button class="chip" data-floor="${k}" aria-pressed="${S.room.floor === k}"><i style="width:14px;height:14px;border-radius:5px;background:${E.FLOORS[k].a}"></i>${E.FLOORS[k].name}</button>`).join('')}</div>`, 'decor', 'mode-bar top');
     $$('[data-place]', rui).forEach(b => b.onclick = () => placeFurn(b.dataset.place));
     $$('[data-wall]', rui).forEach(b => b.onclick = () => { S.room.wall = b.dataset.wall; persist(); bg = null; renderBg(0); sfx('pop'); decorBar(); });
     $$('[data-floor]', rui).forEach(b => b.onclick = () => { S.room.floor = b.dataset.floor; persist(); bg = null; renderBg(0); sfx('pop'); decorBar(); });
@@ -457,6 +457,7 @@ function makeHome(scr) {
   function showBar(html, m, cls) {
     $$('.tray,.mode-bar', rui).forEach(x => x.remove()); $('#dock', scr).classList.add('hide');
     const d = document.createElement('div'); d.className = cls || 'mode-bar'; d.innerHTML = html; rui.appendChild(d); mode = m;
+    if (m !== 'decor') requestAnimationFrame(() => { if (!d.isConnected) return; const top = d.offsetTop; petGroundT = Math.min(baseGround, top - 8); }); else { $('#dock', scr).classList.add('hide'); $('#needs', scr).style.visibility = 'hidden'; $('.mood', scr).style.visibility = 'hidden'; $('.side-stack', scr).style.visibility = 'hidden'; }
     $$('.dock-btn', scr).forEach(b => b.setAttribute('aria-pressed', b.dataset.act === m));
     return d;
   }
@@ -487,15 +488,15 @@ function makeHome(scr) {
   function playBar() {
     const owned = TOYS.filter(t => S.inv.toys[t]);
     const cur = ball ? ball.id : owned[0];
-    if (!ball) ball = { id: cur, x: W * .72, y: groundY - 12, vx: 0, vy: 0, rot: 0, state: 'rest' };
+    if (!ball) ball = { id: cur, x: W * .72, y: P.y - 12, vx: 0, vy: 0, rot: 0, state: 'rest' };
     const d = showBar(`<div class="row"><h3>Fetch!</h3><button class="x" data-done aria-label="Close">${SVG.x}</button></div><p>Grab the toy and fling it — ${esc(S.pet.name)} will bring it back.</p>
       <div class="row"><div class="tray-row" style="flex:1;padding:0">${owned.map(t => `<button class="titem ${t === cur ? 'sel' : ''}" data-toy="${t}" aria-label="${E.ITEMS[t].name}" style="width:56px"><img src="${itemURL(t)}" alt="" style="width:34px;height:34px"></button>`).join('')}</div><button class="btn btn-sm btn-mint" data-throw>Throw!</button></div>`, 'play');
     $('[data-done]', d).onclick = () => { sfx('tap'); H_.endMode(); };
     $('[data-throw]', d).onclick = () => { if (P.state === 'fetch' || P.state === 'return') return; throwRandom(); };
-    $$('[data-toy]', d).forEach(b => b.onclick = () => { if (P.holding) return; ball = { id: b.dataset.toy, x: W * .72, y: groundY - 60, vx: 0, vy: 0, rot: 0, state: 'fly' }; sfx('pop'); playBar(); });
+    $$('[data-toy]', d).forEach(b => b.onclick = () => { if (P.holding) return; ball = { id: b.dataset.toy, x: W * .72, y: P.y - 60, vx: 0, vy: 0, rot: 0, state: 'fly' }; sfx('pop'); playBar(); });
   }
   function bathBar() {
-    sponge = document.createElement('img'); sponge.className = 'sponge pxi'; sponge.src = spongeURL(); sponge.alt = ''; room.appendChild(sponge); moveSponge(W * .75, groundY - 100);
+    sponge = document.createElement('img'); sponge.className = 'sponge pxi'; sponge.src = spongeURL(); sponge.alt = ''; room.appendChild(sponge); moveSponge(W * .75, P.y - 100);
     scrubP = 0; room.style.cursor = 'none';
     const d = showBar(`<div class="row"><h3>Bubble bath</h3><button class="x" data-done aria-label="Close">${SVG.x}</button></div><p id="bathmsg">Scrub ${esc(S.pet.name)} with the sponge — rub back and forth!</p><div class="prog" aria-hidden="true"><i id="bathbar" style="width:0%"></i></div><button class="btn btn-sm btn-sky" data-auto>Auto-scrub (tap)</button>`, 'bath');
     $('[data-done]', d).onclick = () => { sfx('tap'); H_.endMode(); };
@@ -524,7 +525,7 @@ function makeHome(scr) {
       else if (a === 'dress') openWardrobe(); else if (a === 'talk') openTalk(); else if (a === 'photo') openPhoto();
     },
     endMode(woke) {
-      const was = mode; mode = null; selFurn = null; refreshDecorSel();
+      const was = mode; mode = null; selFurn = null; refreshDecorSel(); petGroundT = baseGround; ['#needs', '.mood', '.side-stack'].forEach(q => { const e = $(q, scr); if (e) e.style.visibility = ''; });
       $$('.tray,.mode-bar', rui).forEach(x => x.remove()); const dk = $('#dock', scr); dk && dk.classList.remove('hide');
       $$('.dock-btn', scr).forEach(b => b.setAttribute('aria-pressed', 'false'));
       if (sponge) { sponge.remove(); sponge = null; room.style.cursor = ''; bubblesOn.length = 0; }

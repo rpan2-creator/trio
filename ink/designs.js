@@ -655,7 +655,7 @@ const ACCENTS = [
 function buildSVG(spec) {
   const mode = spec.mode || 'color';
   const c = Ctx(mode);
-  const M = MOTIFS.find(m => m.id === spec.motif) || MOTIFS[0];
+  const M = spec.motif === 'none' ? { draw: () => '' } : (MOTIFS.find(m => m.id === spec.motif) || MOTIFS[0]);
   const F = FRAMES.find(x => x.id === spec.frame) || FRAMES[0];
   let s = F.back(c);
   const sc = spec.frame && spec.frame !== 'none' && spec.frame !== 'banner' ? .74 : .92;
