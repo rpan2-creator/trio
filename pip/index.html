@@ -4,37 +4,40 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>PIP · Pixel Pet</title>
-<meta name="description" content="Create an original pet, or a pixel companion inspired by a pet who is far away.">
-<meta name="theme-color" content="#F5F0E6">
+<meta name="description" content="Hatch, design or recreate a pixel companion — then feed, bathe, train, dress up and play with it.">
+<meta name="theme-color" content="#fff3e2">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/shared/frame.css">
 <link rel="stylesheet" href="/pip/pip.css">
 </head>
 <body>
 <main class="stage">
   <section class="side-panel">
-    <a class="back-hub" href="/">← 所有应用</a>
-    <div class="eyebrow" style="margin-top:22px">PRD 01 · P0 BETA</div>
-    <h1>PIP 像素宠物</h1>
-    <p>原创宠物或真实宠物的虚拟演绎。喂食、抚摸和找玩具全部在本机离线运行；说话会调用服务端的真实模型，未配置时界面会明确标注“simple response”。</p>
+    <a class="back-hub" href="/">← All apps</a>
+    <div class="eyebrow" style="margin-top:22px">PRD 01 · PIXEL PET GAME</div>
+    <h1>PIP — your pixel pal</h1>
+    <p>Hatch a mystery egg, design any creature you can imagine, or make a companion inspired by a pet who lives far away. Pet it, feed it, bathe it, teach it tricks, dress it up and play mini-games together — it never gets sick and never makes you feel guilty for leaving.</p>
     <ul>
-      <li>存档：IndexedDB，仅在这台设备</li>
-      <li>语音：浏览器语音识别，转写后先确认再发送</li>
-      <li>记忆：只有你确认保存的内容会进入对话</li>
-      <li>无死亡、饥饿惩罚或付费门槛</li>
+      <li>Endless species from a procedural pixel-creature generator</li>
+      <li>Rich direct play: rub, feed by drag, scrub, fetch, tricks, tickles</li>
+      <li>Three mini-games, daily quests, levels, shop and room decorating</li>
+      <li>Talks back, and only remembers what you confirm</li>
     </ul>
     <div id="svc"></div>
   </section>
   <div class="device-wrap">
     <div class="iphone"><div class="bezel"><div class="screen">
-      <div id="app" class="app-root pip" aria-live="off"></div>
+      <div id="app" class="app-root pip"></div>
     </div></div></div>
   </div>
 </main>
 <div id="sr" class="sr-only" aria-live="polite"></div>
 <script src="/shared/frame.js"></script>
-<script src="/pip/sprites.js"></script>
+<script src="/pip/engine.js"></script>
 <script src="/pip/app.js"></script>
+<script src="/pip/home.js"></script>
+<script src="/pip/pages.js"></script>
+<script src="/pip/games.js"></script>
 </body>
 </html>
