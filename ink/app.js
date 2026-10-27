@@ -1,651 +1,1050 @@
-/* INK STUDY — P0 beta. */
-(function(){
+/* INK STUDY v2 — app shell, screens, simulated AR camera controller, aging model, consultation pack. */
+(function () {
 'use strict';
-const St=window.InkStore,R=window.InkRender,D=window.InkDesigns;
-const app=document.getElementById('app'),sr=document.getElementById('sr');
-const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const announce=t=>{sr.textContent='';setTimeout(()=>sr.textContent=t,30);};
-const MODE_LABEL={photo:'Photo study',ar_marker:'AR marker study',scenario:'Scenario illustration'};
-const REGIONS=['Inner forearm','Outer forearm','Upper arm','Wrist','Shoulder','Calf','Ankle','Collarbone','Back','Other'];
-const urls=new Map();const url=b=>{if(!b)return '';if(!urls.has(b))urls.set(b,URL.createObjectURL(b));return urls.get(b);};
-let S={view:'boot',params:{},hist:[],new:null,ed:null,svc:{}};
+const D = window.InkDesigns;
+const app = document.getElementById('app');
+const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+if (window.Frame) Frame.tone('light');
 
-/* ---------- ui helpers ---------- */
-const I={
- back:'<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg>',
- studio:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 9h16M9 9v11"/></svg>',
- designs:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3c-3 5-6 8-6 12a6 6 0 0 0 12 0c0-4-3-7-6-12z"/></svg>',
- compare:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="8" height="14"/><rect x="13" y="5" width="8" height="14"/></svg>',
- consult:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M5 4h10l4 4v12H5z"/><path d="M15 4v4h4M8 12h8M8 16h6"/></svg>',
- move:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>',
- size:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="10" height="10"/><path d="M14 14l6 6M20 15v5h-5"/></svg>',
- rotate:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/></svg>',
- shape:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M5 6l14-2-2 16-12-3z"/><circle cx="5" cy="6" r="1.5"/><circle cx="19" cy="4" r="1.5"/><circle cx="17" cy="20" r="1.5"/><circle cx="5" cy="17" r="1.5"/></svg>',
- blend:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/></svg>',
- layers:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 4l9 5-9 5-9-5z"/><path d="M3 14l9 5 9-5"/></svg>',
- ruler:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 16L16 3l5 5L8 21z"/><path d="M7 12l2 2M10 9l2 2M13 6l2 2"/></svg>',
-};
-function toast(t){app.querySelectorAll('.toast').forEach(x=>x.remove());const d=document.createElement('div');d.className='toast';d.setAttribute('role','status');d.textContent=t;app.appendChild(d);setTimeout(()=>d.remove(),3400);}
-function topbar(title,o){o=o||{};return `<div class="topbar">${o.back===false?'<span style="width:44px"></span>':`<button class="iconbtn" data-back aria-label="Back">${I.back}</button>`}<div class="title">${esc(title)}</div>${o.right||'<span style="width:44px"></span>'}</div>`;}
-function tabs(cur){return `<nav class="tabs" aria-label="Main">${[['studio','Studio',I.studio],['designs','Designs',I.designs],['compare','Compare',I.compare],['consult','Consult',I.consult]].map(([k,l,i])=>`<button class="tab" data-tab="${k}" ${cur===k?'aria-current="page"':''}>${i}<span>${l}</span></button>`).join('')}</nav>`;}
-function confirmDlg(title,body,verb,danger){return new Promise(res=>{const prev=document.activeElement;const w=document.createElement('div');
-  w.innerHTML=`<div class="scrim"></div><div class="sheet" role="alertdialog" aria-modal="true" aria-labelledby="cdt"><div class="sb stack"><h2 id="cdt">${esc(title)}</h2><p class="muted">${esc(body)}</p></div><div class="sf"><button class="btn block ${danger?'danger':'primary'}" data-ok>${esc(verb)}</button><button class="btn block ghost" data-no>Cancel</button></div></div>`;
-  app.appendChild(w);const done=v=>{w.remove();prev&&prev.focus&&prev.focus();res(v);};w.querySelector('[data-ok]').onclick=()=>done(true);w.querySelector('[data-no]').onclick=()=>done(false);w.querySelector('.scrim').onclick=()=>done(false);w.onkeydown=e=>{if(e.key==='Escape')done(false);};w.querySelector('[data-no]').focus();});}
-function go(v,p,o){o=o||{};if(!o.replace&&S.view!=='boot')S.hist.push([S.view,S.params]);S.view=v;S.params=p||{};render();}
-function back(){const h=S.hist.pop();if(h){S.view=h[0];S.params=h[1];render();}else go('studio',{},{replace:true});}
-async function render(){
-  stopCamera();
-  const V=VIEWS[S.view];const html=await V.html();
-  app.innerHTML=`<div class="view ${V.dark?'dark':''}">${html}</div>`;
-  window.Frame&&Frame.tone(V.dark?'light':'dark');
-  app.querySelectorAll('[data-back]').forEach(b=>b.onclick=back);
-  app.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{S.hist=[];go(b.dataset.tab,{},{replace:true});});
-  V.bind&&await V.bind();
-  const h=app.querySelector('h1,h2');if(h&&!V.dark){h.tabIndex=-1;h.focus({preventScroll:true});}
-}
-async function ensureDesignAsset(libId){
-  const id='asset-'+libId;let a=await St.get('assets',id);if(a)return a;
-  const d=D.DESIGNS.find(x=>x.id===libId);const c=await D.raster(d.svg,1024);
-  const blob=await new Promise(r=>c.toBlob(r,'image/png'));
-  a={id,type:'design',blob,width:1024,height:1024,name:d.name,rights_source:'library:'+libId,rights_note:D.rights,created:Date.now()};
-  await St.put('assets',a);return a;
-}
-const imgCache=new Map();
-async function assetImg(id){if(imgCache.has(id))return imgCache.get(id);const a=await St.get('assets',id);if(!a)return null;const i=await St.img(a.blob);imgCache.set(id,i);return i;}
-async function thumbOf(canvas,size){const k=(size||720)/Math.max(canvas.width,canvas.height);const t=document.createElement('canvas');t.width=Math.round(canvas.width*k);t.height=Math.round(canvas.height*k);t.getContext('2d').drawImage(canvas,0,0,t.width,t.height);return new Promise(r=>t.toBlob(r,'image/jpeg',.82));}
-async function renderVersion(v,max){
-  if(v.capture_asset_id){const i=await assetImg(v.capture_asset_id);const c=document.createElement('canvas');const k=Math.min(1,(max||1600)/Math.max(i.width,i.height));c.width=i.width*k;c.height=i.height*k;c.getContext('2d').drawImage(i,0,0,c.width,c.height);return c;}
-  const base=await assetImg(v.body_asset_id);const layers=[];for(const L of v.layers){layers.push(Object.assign({},L,{img:await assetImg(L.design_asset_id)}));}
-  return R.composite(base,layers,{max:max||1600,scenario:v.scenario,watermark:v.mode==='scenario'?'SCENARIO ILLUSTRATION — not a prediction':null});
-}
-async function studies(){return (await St.all('studies')).sort((a,b)=>b.updated-a.updated);}
-async function versionsOf(sid){return (await St.all('versions')).filter(v=>v.study_id===sid).sort((a,b)=>a.created-b.created);}
+/* ================= storage ================= */
+const KEY = 'inkstudy.v2';
+const defaults = () => ({ settings: { skin: 1, units: 'cm', motion: true, hair: true }, my: [], caps: [], consult: { idea: '', notes: '', q: ['q1', 'q3', 'q5', 'q7'], custom: [], sel: [] }, last: 'rose' });
+let S;
+try { S = Object.assign(defaults(), JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { S = defaults(); }
+S.settings = Object.assign(defaults().settings, S.settings); S.consult = Object.assign(defaults().consult, S.consult);
+function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('Storage is full — delete a few captures'); } }
 
-/* ---------- views ---------- */
-const VIEWS={};
-VIEWS.welcome={
-  html:()=>`<div class="scroll stack" style="padding-top:28px">
-   <div class="eyebrow">Ink Study · No. 01</div>
-   <h1>Try it on before you sit down.</h1>
-   <svg viewBox="0 0 320 170" role="img" aria-label="Line drawing of a forearm with a small fern design placed on it" style="width:100%;background:#fff;border:1px solid var(--rule)"><g fill="none" stroke="#20201E" stroke-width="2" stroke-linecap="round"><path d="M20 120c60-10 140-14 200-30 30-8 60-12 90-10"/><path d="M20 150c70-6 160-6 220-22 25-6 50-8 70-6"/><path d="M150 132c4-20 10-38 24-56" stroke="#8D3027"/><path d="M158 112c-10 0-18-6-22-14M164 100c10-2 18-8 20-18M154 122c-10 0-16-4-20-10" stroke="#8D3027"/></g><path d="M118 62h88v76h-88z" fill="none" stroke="#8D3027" stroke-dasharray="4 4"/></svg>
-   <div class="stack" style="gap:14px">
-    <div><b>Photo study</b><p class="muted">Place a design on a photo of your body. Move, size, rotate and bend it to the surface.</p></div>
-    <div><b>Live AR (with a marker card)</b><p class="muted">See the design move with a printed card placed next to the spot. Works on flat-ish areas only.</p></div>
-    <div><b>Change study</b><p class="muted">An adjustable illustration of fading and softening. It shows possibilities — it can’t predict your skin.</p></div>
-   </div>
-   <p class="small muted">Nothing here replaces your artist’s stencil or advice. Body photos stay on this device.</p>
-  </div><div class="foot"><button class="btn primary block" data-start>Start a study</button><button class="btn ghost block" data-data>How your photos are handled</button></div>`,
-  bind(){app.querySelector('[data-start]').onclick=async()=>{await St.put('meta',{id:'welcomed',v:true});go('studio',{},{replace:true});};
-    app.querySelector('[data-data]').onclick=()=>go('privacy');}
-};
-VIEWS.studio={
-  html:async()=>{const ss=await studies();const vs=await St.all('versions');
-   const cov=async s=>{const v=vs.filter(x=>x.study_id===s.id).sort((a,b)=>b.created-a.created)[0];return v&&v.thumb?url(v.thumb):'';};
-   const items=[];for(const s of ss)items.push(`<button class="study" data-s="${s.id}"><div class="th">${await cov(s)?`<img alt="" src="${await cov(s)}">`:''}</div><div style="flex:1"><b>${esc(s.title)}</b><span>${esc(s.body_region)} · ${vs.filter(v=>v.study_id===s.id).length} versions · ${new Date(s.updated).toLocaleDateString()}</span></div></button>`);
-   return `<div class="topbar"><span style="width:44px"></span><div class="title"></div><button class="iconbtn" data-settings aria-label="Data and permissions">⚙︎</button></div>
-   <div class="scroll stack"><div class="eyebrow">Studio</div><h1>Your studies</h1>
-    <button class="btn primary block" data-new>New study</button>
-    ${items.length?`<div>${items.join('')}</div>`:`<div class="empty"><p class="serif" style="font-size:20px;color:var(--ink)">No studies yet.</p><p class="small">A study is one idea — a design and a spot on your body — with as many versions as you like.</p></div>`}
-   </div>${tabs('studio')}`;},
-  bind(){app.querySelector('[data-new]').onclick=()=>{S.new={};go('source');};app.querySelector('[data-settings]').onclick=()=>go('privacy');
-    app.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>go('study',{id:b.dataset.s}));}
-};
-VIEWS.source={
-  html:()=>`${topbar('New study')}<div class="scroll stack"><div class="eyebrow">Step 1 of 3</div><h2>Choose a design</h2>
-   <button class="choice" data-lib><div><b>From the INK STUDY library</b><span>${D.DESIGNS.length} original line drawings, cleared for try-on.</span></div></button>
-   <button class="choice" data-up><div><b>Upload your own</b><span>PNG or JPEG (transparent PNG works best), or SVG. Only upload art you have the right to use.</span></div></button>
-   <input type="file" id="dup" accept="image/png,image/jpeg,image/svg+xml" hidden>
-   <p class="err" id="derr" role="alert"></p></div>`,
-  bind(){const f=app.querySelector('#dup');app.querySelector('[data-lib]').onclick=()=>go('designs',{pick:true});app.querySelector('[data-up]').onclick=()=>f.click();
-    f.onchange=async()=>{const file=f.files[0];if(!file)return;const err=app.querySelector('#derr');
-      if(!/^image\/(png|jpeg|svg\+xml)$/.test(file.type)){err.textContent='Use a PNG, JPEG or SVG file.';return;}
-      if(file.size>12e6){err.textContent='That file is over 12 MB.';return;}
-      try{ // SVG is rasterized through <img>, which never runs scripts; then stored as PNG
-        let blob,w,h;
-        if(file.type==='image/svg+xml'){const txt=await file.text();if(/<script|on\w+=|javascript:/i.test(txt)){err.textContent='This SVG contains scripts or event handlers, so it can’t be used. Export it as PNG instead.';return;}
-          const i=await St.img(new Blob([txt],{type:'image/svg+xml'}));const c=document.createElement('canvas');const k=1024/Math.max(i.width||1024,i.height||1024);c.width=Math.round((i.width||1024)*k);c.height=Math.round((i.height||1024)*k);c.getContext('2d').drawImage(i,0,0,c.width,c.height);blob=await new Promise(r=>c.toBlob(r,'image/png'));w=c.width;h=c.height;}
-        else{const n=await St.normalize(file,1400,'image/png');blob=n.blob;w=n.width;h=n.height;}
-        S.new.pendingUpload={blob,width:w,height:h,name:file.name.replace(/\.[^.]+$/,'').slice(0,40)};go('rights');
-      }catch(e){err.textContent='Couldn’t read that image. Try another file.';}};}
-};
-VIEWS.rights={
-  html:()=>{const u=S.new.pendingUpload;return `${topbar('Your design')}<div class="scroll stack"><div class="art"><div class="pic"><img alt="Your uploaded design" src="${url(u.blob)}"></div></div>
-   <div class="field"><label class="label" for="dn">Name</label><input id="dn" value="${esc(u.name)}" maxlength="40"></div>
-   <div class="field"><label class="label" for="ds">Where it’s from</label><select id="ds"><option value="own">I drew it myself</option><option value="artist">My artist made it for me</option><option value="licensed">I have a license or permission</option></select></div>
-   <label class="check"><input type="checkbox" id="ok"><span>I have the right to use this design for a try-on and to share it with my artist.</span></label>
-   <p class="small muted">Saying so doesn’t grant a license. Please don’t upload another artist’s work without permission.</p>
-  </div><div class="foot"><button class="btn primary block" data-use>Use in study</button></div>`;},
-  bind(){app.querySelector('[data-use]').onclick=async()=>{if(!app.querySelector('#ok').checked){toast('Please confirm you have the right to use this design.');return;}
-    const u=S.new.pendingUpload;const a={id:St.uid(),type:'design',blob:u.blob,width:u.width,height:u.height,name:app.querySelector('#dn').value.trim()||'My design',rights_source:'user:'+app.querySelector('#ds').value,created:Date.now()};
-    await St.put('assets',a);S.new.design=a.id;delete S.new.pendingUpload;go('body');};}
-};
-VIEWS.designs={
-  html:()=>`${S.params.pick?topbar('Library'):'<div class="topbar"></div>'}<div class="scroll stack"><div class="eyebrow">Licensed library</div><h1>Designs</h1>
-   <div class="chips" role="radiogroup" aria-label="Style">${['All','Botanical','Minimal','Line','Celestial','Traditional','Graphic'].map(s=>`<button class="chip" role="radio" aria-checked="${(S.params.f||'All')===s}" data-f="${s}">${s}</button>`).join('')}</div>
-   <div class="grid2">${D.DESIGNS.filter(d=>!S.params.f||S.params.f==='All'||d.style===S.params.f).map(d=>`<button class="art" data-d="${d.id}"><div class="pic">${d.svg}</div><b>${esc(d.name)}</b><span>${d.style} · ${d.lines} lines</span></button>`).join('')||'<p class="empty">No designs in this style. <button class="btn ghost" data-f="All">Clear filter</button></p>'}</div>
-   <p class="small muted">${esc(D.rights)}</p></div>${S.params.pick?'':tabs('designs')}`,
-  bind(){app.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{S.params.f=b.dataset.f;render();});
-    app.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>go('design',{id:b.dataset.d}));}
-};
-VIEWS.design={
-  html:()=>{const d=D.DESIGNS.find(x=>x.id===S.params.id);return `${topbar(d.name)}<div class="scroll stack"><div class="art"><div class="pic" style="aspect-ratio:1">${d.svg}</div></div>
-   <h2>${esc(d.name)}</h2><p class="muted">${d.style} · ${d.lines} lines</p>
-   <div class="notice"><b>Rights:</b> ${esc(D.rights)}</div>
-   <p class="small muted">Recorded with every version that uses it, so your package shows where the art came from.</p></div>
-   <div class="foot"><button class="btn primary block" data-use>Use in study</button></div>`;},
-  bind(){app.querySelector('[data-use]').onclick=async()=>{const a=await ensureDesignAsset(S.params.id);if(S.ed&&S.params.addLayer){S.params.addLayer(a);return;}S.new=S.new||{};S.new.design=a.id;go('body');};}
-};
-VIEWS.body={
-  html:()=>`${topbar('Body photo')}<div class="scroll stack"><div class="eyebrow">Step 2 of 3</div><h2>Photo of the spot</h2>
-   <svg viewBox="0 0 300 120" role="img" aria-label="Guide: fill the frame with the area, in even light, camera straight on" style="width:100%;background:#fff;border:1px solid var(--rule)"><rect x="70" y="14" width="160" height="92" rx="6" fill="none" stroke="#8D3027" stroke-dasharray="5 4"/><path d="M40 90c60-10 160-14 220-30" stroke="#20201E" stroke-width="2" fill="none"/><path d="M40 108c80-4 160-6 230-24" stroke="#20201E" stroke-width="2" fill="none"/><text x="150" y="60" text-anchor="middle" font-size="11" fill="#625E57">fill the frame · even light · straight on</text></svg>
-   <p class="muted small">Photograph just the area you’re considering. Photos are re-encoded on this device (location data removed) and never uploaded unless you export them.</p>
-   <input type="file" id="bup" accept="image/*" hidden><p class="err" id="berr" role="alert"></p></div>
-   <div class="foot"><button class="btn primary block" data-cam>Take photo</button><button class="btn block" data-up>Upload a photo</button></div>`,
-  bind(){const f=app.querySelector('#bup');
-    app.querySelector('[data-cam]').onclick=()=>{if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){app.querySelector('#berr').textContent='This browser can’t open the camera here. Upload a photo instead.';return;}go('camera');};
-    app.querySelector('[data-up]').onclick=()=>f.click();
-    f.onchange=async()=>{const file=f.files[0];if(!file)return;try{const n=await St.normalize(file,2000);S.new.bodyDraft=n;go('review');}catch(e){app.querySelector('#berr').textContent='Couldn’t open that image. Try a JPEG or PNG.';}};}
-};
-let camStream=null;function stopCamera(){if(camStream){camStream.getTracks().forEach(t=>t.stop());camStream=null;}}
-VIEWS.camera={dark:true,
-  html:()=>`<div class="topbar"><button class="btn ghost" data-cancel style="min-height:44px">Cancel</button><div class="title">Photo study</div><button class="btn ghost" data-flip style="min-height:44px" aria-label="Switch camera">Flip</button></div>
-   <div class="cam"><video id="v" playsinline muted autoplay aria-label="Camera preview"></video><div class="guide"></div><p id="cmsg" role="status" style="position:absolute;left:12px;right:12px;bottom:10px;text-align:center;font-size:13px">Starting camera…</p></div>
-   <div class="row" style="justify-content:center;padding:16px 0 calc(var(--safe-bottom) + 14px)"><button class="shutter" data-shoot aria-label="Take photo" disabled></button></div>`,
-  async bind(){
-    let facing=S.params.facing||'environment';const v=app.querySelector('#v'),msg=app.querySelector('#cmsg'),sh=app.querySelector('[data-shoot]');
-    async function start(){stopCamera();try{camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:1920},height:{ideal:1440}},audio:false});v.srcObject=camStream;await v.play();msg.textContent='Fill the frame with the spot. Even light helps.';sh.disabled=false;}
-      catch(e){msg.innerHTML=e.name==='NotAllowedError'?'Camera access was declined. You can <button class="btn ghost" data-upl style="min-height:36px;color:#fff;text-decoration:underline">upload a photo</button> instead, or allow the camera in your browser settings.':'Couldn’t start the camera ('+esc(e.name)+'). <button class="btn ghost" data-upl style="min-height:36px;color:#fff;text-decoration:underline">Upload instead</button>';
-        const u=app.querySelector('[data-upl]');if(u)u.onclick=()=>{S.hist.pop();go('body',{},{replace:true});};}}
-    await start();
-    app.querySelector('[data-cancel]').onclick=back;
-    app.querySelector('[data-flip]').onclick=()=>{facing=facing==='environment'?'user':'environment';start();};
-    sh.onclick=async()=>{if(!v.videoWidth)return;const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);stopCamera();
-      const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.9));S.new.bodyDraft={blob,width:c.width,height:c.height};go('review',{},{replace:true});};
+const IDB = (() => {
+  let dbp = null; const mem = new Map();
+  function open() {
+    if (dbp) return dbp;
+    dbp = new Promise((res) => {
+      try { const r = indexedDB.open('inkstudy', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => res(null); } catch (e) { res(null); }
+    });
+    return dbp;
   }
-};
-VIEWS.review={dark:true,
-  html:()=>`${topbar('Check photo')}<div class="stagearea"><canvas id="rc" aria-label="Your photo"></canvas></div>
-   <div class="panel"><div class="row"><span class="small" style="color:#bdb8ae">Crop</span>${[['full','Full'],['43','3:4'],['11','Square']].map(([k,l])=>`<button class="nbtn" data-crop="${k}" aria-pressed="${(S.new.crop||'full')===k}">${l}</button>`).join('')}<button class="nbtn" data-rot>Rotate</button></div>
-   <p class="small" style="color:#bdb8ae">Crop out faces, other people and anything you don’t want in the study.</p></div>
-   <div class="foot" style="background:#1f1e1c"><div class="row"><button class="btn" style="flex:1" data-retake>Retake</button><button class="btn primary" style="flex:2" data-use>Use photo</button></div></div>`,
-  async bind(){
-    const b=S.new.bodyDraft;const img=await St.img(b.blob);const c=app.querySelector('#rc');S.new.rot=S.new.rot||0;
-    const draw=()=>{const rot=S.new.rot%360,sw=rot%180?img.height:img.width,sh=rot%180?img.width:img.height;let cw=sw,ch=sh;const crop=S.new.crop||'full';
-      if(crop==='43'){if(cw/ch>3/4)cw=ch*3/4;else ch=cw*4/3;}if(crop==='11'){cw=ch=Math.min(cw,ch);}
-      c.width=Math.round(cw);c.height=Math.round(ch);const x=c.getContext('2d');x.save();x.translate(c.width/2,c.height/2);x.rotate(rot*Math.PI/180);x.drawImage(img,-img.width/2,-img.height/2);x.restore();
-      const area=app.querySelector('.stagearea');const k=Math.min(area.clientWidth/c.width,area.clientHeight/c.height);c.style.width=c.width*k+'px';c.style.height=c.height*k+'px';};
-    draw();
-    app.querySelectorAll('[data-crop]').forEach(x=>x.onclick=()=>{S.new.crop=x.dataset.crop;app.querySelectorAll('[data-crop]').forEach(y=>y.setAttribute('aria-pressed',String(y===x)));draw();});
-    app.querySelector('[data-rot]').onclick=()=>{S.new.rot+=90;draw();};
-    app.querySelector('[data-retake]').onclick=()=>{S.new.bodyDraft=null;S.new.rot=0;S.new.crop='full';back();};
-    app.querySelector('[data-use]').onclick=async()=>{const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.9));
-      const a={id:St.uid(),type:'body',blob,width:c.width,height:c.height,created:Date.now(),retention:'device'};await St.put('assets',a);
-      S.new.body=a.id;S.new.bodyDraft=null;go('naming',{},{replace:true});};
-  }
-};
-VIEWS.naming={
-  html:()=>`${topbar('New study')}<div class="scroll stack"><div class="eyebrow">Step 3 of 3</div><h2>Name this study</h2>
-   <div class="field"><label class="label" for="st">Title</label><input id="st" maxlength="40" placeholder="e.g. Fern on left forearm"></div>
-   <div class="field"><label class="label" for="sr2">Body area</label><select id="sr2">${REGIONS.map(r=>`<option>${r}</option>`).join('')}</select><span class="hint">Just a label for you and your artist. No measurements needed.</span></div>
-   <p class="err" id="nerr" role="alert"></p></div><div class="foot"><button class="btn primary block" data-go>Open editor</button></div>`,
-  bind(){app.querySelector('[data-go]').onclick=async()=>{const t=app.querySelector('#st').value.trim();if(!t){app.querySelector('#nerr').textContent='Give the study a short title.';app.querySelector('#st').focus();return;}
-    const s={id:St.uid(),title:t,body_region:app.querySelector('#sr2').value,created:Date.now(),updated:Date.now(),last_body:S.new.body};await St.put('studies',s);
-    S.hist=[['studio',{}]];startEditor({studyId:s.id,bodyId:S.new.body,layers:[{design_asset_id:S.new.design}],fresh:true});};}
-};
-
-/* ---------- editor ---------- */
-async function startEditor(o){
-  const base=await assetImg(o.bodyId);const W=base.width,H=base.height;
-  const layers=[];for(const L of o.layers){const img=await assetImg(L.design_asset_id);
-    let q=L.quad?L.quad.map(p=>[p[0]*W,p[1]*H]):null;
-    if(!q){const w=Math.min(W,H)*.42,h=w*img.height/img.width;q=R.rectQuad(W/2,H/2,w,h,0);}
-    layers.push({design_asset_id:L.design_asset_id,img,quad:q,opacity:L.opacity==null?.88:L.opacity,blend:L.blend||'multiply',visible:L.visible!==false});}
-  S.ed={studyId:o.studyId,bodyId:o.bodyId,base,layers,sel:0,tool:'move',undo:[],redo:[],scaleRef:o.scaleRef?{p1:[o.scaleRef.p1[0]*W,o.scaleRef.p1[1]*H],p2:[o.scaleRef.p2[0]*W,o.scaleRef.p2[1]*H],length:o.scaleRef.length,unit:o.scaleRef.unit}:null,source:o.source||null,dirty:!!o.fresh,corner:0};
-  go('editor',{},{replace:!!o.replace});
-}
-function snap(){const e=S.ed;return JSON.stringify({l:e.layers.map(L=>({q:L.quad,o:L.opacity,b:L.blend,v:L.visible,d:L.design_asset_id})),s:e.scaleRef});}
-function pushUndo(){const e=S.ed;e.undo.push(snap());if(e.undo.length>30)e.undo.shift();e.redo=[];e.dirty=true;}
-async function restore(js){const e=S.ed,o=JSON.parse(js);const L=[];for(const x of o.l){L.push({quad:x.q,opacity:x.o,blend:x.b,visible:x.v,design_asset_id:x.d,img:await assetImg(x.d)});}e.layers=L;e.scaleRef=o.s;e.sel=Math.min(e.sel,L.length-1);}
-const cen=q=>[(q[0][0]+q[1][0]+q[2][0]+q[3][0])/4,(q[0][1]+q[1][1]+q[2][1]+q[3][1])/4];
-const xf=(q,fn)=>{const c=cen(q);return q.map(p=>fn(p,c));};
-const qMove=(q,dx,dy)=>q.map(p=>[p[0]+dx,p[1]+dy]);
-const qScale=(q,k)=>xf(q,(p,c)=>[c[0]+(p[0]-c[0])*k,c[1]+(p[1]-c[1])*k]);
-const qRot=(q,a)=>xf(q,(p,c)=>{const s=Math.sin(a),co=Math.cos(a),x=p[0]-c[0],y=p[1]-c[1];return [c[0]+x*co-y*s,c[1]+x*s+y*co];});
-const qAngle=q=>Math.atan2(q[1][1]-q[0][1],q[1][0]-q[0][0]);
-const qWidth=q=>Math.hypot(q[1][0]-q[0][0],q[1][1]-q[0][1]);
-VIEWS.editor={dark:true,
-  html:()=>`<div class="topbar"><button class="iconbtn" data-x aria-label="Close editor">${I.back}</button><div class="title"><span class="tag" style="color:#f9f6ee">Photo study</span></div><button class="btn primary" data-save style="min-height:40px;padding:0 14px">Save version</button></div>
-   <div class="stagearea" id="area"><canvas id="ec" role="img" aria-label="Design placed on your photo"></canvas></div>
-   <div class="panel" id="panel" aria-live="polite"></div>
-   <div class="tools" role="toolbar" aria-label="Edit tools">${[['move','Move',I.move],['size','Size',I.size],['rotate','Rotate',I.rotate],['shape','Shape',I.shape],['blend','Blend',I.blend],['layers','Layers',I.layers],['scale','Scale',I.ruler]].map(([k,l,i])=>`<button class="tool" data-tool="${k}" aria-pressed="${S.ed.tool===k}">${i}${l}</button>`).join('')}
-    <button class="tool" data-undo>↶<span>Undo</span></button><button class="tool" data-redo>↷<span>Redo</span></button></div>`,
-  bind(){
-    S.pickLayer=null;
-    const e=S.ed,c=app.querySelector('#ec'),area=app.querySelector('#area');
-    const W=e.base.width,H=e.base.height;const fit=Math.min(1,900/Math.max(W,H));c.width=Math.round(W*fit);c.height=Math.round(H*fit);
-    const sizeIt=()=>{const k=Math.min(area.clientWidth/c.width,area.clientHeight/c.height);c.style.width=c.width*k+'px';c.style.height=c.height*k+'px';};sizeIt();
-    let fast=false,raf=0;
-    const draw=()=>{cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>{
-      const layers=e.layers.map(L=>Object.assign({},L,{quad:L.quad.map(p=>[p[0]/W,p[1]/H])}));
-      R.composite(e.base,layers,{canvas:c,max:Math.max(c.width,c.height),fast});
-      const x=c.getContext('2d'),k=c.width/W,L=e.layers[e.sel];
-      if(L&&L.visible){x.save();x.strokeStyle='#f9f6ee';x.setLineDash([6,5]);x.lineWidth=1.5;x.beginPath();L.quad.forEach((p,i)=>i?x.lineTo(p[0]*k,p[1]*k):x.moveTo(p[0]*k,p[1]*k));x.closePath();x.stroke();x.setLineDash([]);
-        if(e.tool==='shape')L.quad.forEach((p,i)=>{x.fillStyle=i===e.corner?'#8D3027':'#f9f6ee';x.beginPath();x.arc(p[0]*k,p[1]*k,9,0,7);x.fill();x.strokeStyle='#171717';x.stroke();});x.restore();}
-      if(e.tool==='scale'&&e.scaleRef){const r=e.scaleRef;x.save();x.strokeStyle='#f5c542';x.lineWidth=3;x.beginPath();x.moveTo(r.p1[0]*k,r.p1[1]*k);x.lineTo(r.p2[0]*k,r.p2[1]*k);x.stroke();[r.p1,r.p2].forEach((p,i)=>{x.fillStyle=i===e.corner%2?'#8D3027':'#f5c542';x.beginPath();x.arc(p[0]*k,p[1]*k,9,0,7);x.fill();});x.restore();}
-      c.setAttribute('aria-label',describe());
-    });};
-    e.draw=draw;draw();paintPanel();
-    // pointer: drag moves; two pointers pinch scale/rotate; shape tool drags nearest corner
-    const pts=new Map();let startQ=null,startPts=null,startRef=null;
-    const toImg=ev=>{const r=c.getBoundingClientRect();return [(ev.clientX-r.left)/r.width*W,(ev.clientY-r.top)/r.height*H];};
-    area.addEventListener('pointerdown',ev=>{const L=e.layers[e.sel];if(!L)return;area.setPointerCapture(ev.pointerId);pts.set(ev.pointerId,toImg(ev));
-      if(pts.size===1){pushUndo();startQ=L.quad.map(p=>p.slice());startRef=e.scaleRef&&JSON.parse(JSON.stringify(e.scaleRef));const p=toImg(ev);
-        if(e.tool==='shape'){let bi=0,bd=1e9;L.quad.forEach((q,i)=>{const d=Math.hypot(q[0]-p[0],q[1]-p[1]);if(d<bd){bd=d;bi=i;}});e.corner=bi;}
-        if(e.tool==='scale'&&e.scaleRef){const r=e.scaleRef;e.corner=Math.hypot(r.p1[0]-p[0],r.p1[1]-p[1])<Math.hypot(r.p2[0]-p[0],r.p2[1]-p[1])?0:1;}}
-      startPts=[...pts.values()].map(p=>p.slice());fast=true;});
-    area.addEventListener('pointermove',ev=>{if(!pts.has(ev.pointerId))return;pts.set(ev.pointerId,toImg(ev));const L=e.layers[e.sel];const cur=[...pts.values()];
-      if(cur.length===1&&startPts.length===1){const dx=cur[0][0]-startPts[0][0],dy=cur[0][1]-startPts[0][1];
-        if(e.tool==='shape'){L.quad=startQ.map((p,i)=>i===e.corner?[p[0]+dx,p[1]+dy]:p.slice());}
-        else if(e.tool==='scale'&&e.scaleRef){const r=JSON.parse(JSON.stringify(startRef));const k2=e.corner?'p2':'p1';r[k2]=[r[k2][0]+dx,r[k2][1]+dy];e.scaleRef=r;}
-        else L.quad=qMove(startQ,dx,dy);}
-      else if(cur.length>=2&&startPts.length>=2){const d0=Math.hypot(startPts[1][0]-startPts[0][0],startPts[1][1]-startPts[0][1]),d1=Math.hypot(cur[1][0]-cur[0][0],cur[1][1]-cur[0][1]);
-        const a0=Math.atan2(startPts[1][1]-startPts[0][1],startPts[1][0]-startPts[0][0]),a1=Math.atan2(cur[1][1]-cur[0][1],cur[1][0]-cur[0][0]);
-        L.quad=qRot(qScale(startQ,d1/Math.max(1,d0)),a1-a0);}
-      draw();});
-    const up=ev=>{pts.delete(ev.pointerId);if(!pts.size){fast=false;draw();paintPanel();}else{startPts=[...pts.values()].map(p=>p.slice());startQ=e.layers[e.sel].quad.map(p=>p.slice());}};
-    area.addEventListener('pointerup',up);area.addEventListener('pointercancel',up);
-    app.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>{e.tool=b.dataset.tool;e.corner=0;app.querySelectorAll('[data-tool]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
-      if(e.tool==='scale'&&!e.scaleRef){}draw();paintPanel();});
-    app.querySelector('[data-undo]').onclick=async()=>{const s=e.undo.pop();if(!s){toast('Nothing to undo.');return;}e.redo.push(snap());await restore(s);draw();paintPanel();};
-    app.querySelector('[data-redo]').onclick=async()=>{const s=e.redo.pop();if(!s){toast('Nothing to redo.');return;}e.undo.push(snap());await restore(s);draw();paintPanel();};
-    app.querySelector('[data-x]').onclick=async()=>{if(e.dirty&&!(await confirmDlg('Leave without saving?','Changes since your last saved version will be lost. Saved versions are never changed.','Leave editor',true)))return;S.ed=null;goStudy(e.studyId);};
-    app.querySelector('[data-save]').onclick=async ev=>{const b=ev.currentTarget;b.disabled=true;b.textContent='Saving…';
-      try{const v=await saveVersion();e.dirty=false;toast('Saved as a new version.');S.ed=null;goStudy(e.studyId,v.id);}catch(err){b.disabled=false;b.textContent='Save version';toast('Couldn’t save on this device: '+err.message);}};
-  }
-};
-function goStudy(id,vid){S.hist=[['studio',{}]];go('study',{id,v:vid},{replace:true});}
-function describe(){const e=S.ed,L=e.layers[e.sel];if(!L)return 'No design layer';const W=e.base.width,H=e.base.height,c=cen(L.quad);
-  return `Design centered ${Math.round(c[0]/W*100)}% across and ${Math.round(c[1]/H*100)}% down, ${Math.round(qWidth(L.quad)/W*100)}% of the photo width, rotated ${Math.round(qAngle(L.quad)*180/Math.PI)} degrees${sizeText()?', about '+sizeText():''}.`;}
-function sizeText(){const e=S.ed;if(!e||!e.scaleRef||!e.scaleRef.length)return '';const r=e.scaleRef,px=Math.hypot(r.p2[0]-r.p1[0],r.p2[1]-r.p1[1]);if(px<5)return '';const L=e.layers[e.sel];if(!L)return '';
-  const per=r.length/px,w=qWidth(L.quad)*per,h=Math.hypot(L.quad[3][0]-L.quad[0][0],L.quad[3][1]-L.quad[0][1])*per;return `${w.toFixed(1)} × ${h.toFixed(1)} ${r.unit} (rough)`;}
-function paintPanel(){
-  const e=S.ed,p=app.querySelector('#panel');if(!p)return;const L=e.layers[e.sel];const W=e.base.width;
-  const step=(k,lbl,val)=>`<div class="row"><label style="min-width:58px">${lbl}</label>${k}<span class="valbox">${val}</span></div>`;
-  let h='';
-  if(!L&&e.tool!=='layers'){h='<p class="small">No design layers. Add one in Layers.</p>';}
-  else if(e.tool==='move'){h=`<div class="row" role="group" aria-label="Move design">${[['-1,0','←','left'],['0,-1','↑','up'],['0,1','↓','down'],['1,0','→','right']].map(([d,s,n])=>`<button class="nbtn" data-mv="${d}" aria-label="Move ${n}">${s}</button>`).join('')}<span class="small" style="color:#bdb8ae">Drag on the photo, or nudge 1% at a time.</span></div>`;}
-  else if(e.tool==='size'){const w=qWidth(L.quad)/W*100;h=step(`<button class="nbtn" data-sz="0.95" aria-label="Smaller">−</button><input type="range" min="5" max="120" step="1" value="${w.toFixed(0)}" id="szr" aria-label="Width as percent of photo"><button class="nbtn" data-sz="1.05" aria-label="Larger">+</button>`,'Width',w.toFixed(0)+'%')+`<p class="small" style="color:#bdb8ae">${sizeText()?'≈ '+sizeText()+' · perspective and curves add error':'Relative size only. Add a measured reference in Scale to see rough cm/in.'}</p>`;}
-  else if(e.tool==='rotate'){const a=qAngle(L.quad)*180/Math.PI;h=step(`<button class="nbtn" data-rt="-5" aria-label="Rotate left 5 degrees">⟲</button><input type="range" min="-180" max="180" step="1" value="${a.toFixed(0)}" id="rtr" aria-label="Rotation in degrees"><button class="nbtn" data-rt="5" aria-label="Rotate right 5 degrees">⟳</button>`,'Angle',a.toFixed(0)+'°');}
-  else if(e.tool==='shape'){h=`<div class="row" role="radiogroup" aria-label="Corner">${['Top left','Top right','Bottom right','Bottom left'].map((n,i)=>`<button class="nbtn" role="radio" data-cn="${i}" aria-checked="${e.corner===i}" aria-pressed="${e.corner===i}" style="font-size:11px;padding:0 8px">${n}</button>`).join('')}</div>
-    <div class="row">${[['-1,0','←','left'],['0,-1','↑','up'],['0,1','↓','down'],['1,0','→','right']].map(([d,s,n])=>`<button class="nbtn" data-cm="${d}" aria-label="Move corner ${n}">${s}</button>`).join('')}<button class="nbtn" data-flat style="font-size:12px;padding:0 10px">Flatten</button></div>
-    <p class="small" style="color:#bdb8ae">Bend the design to a flat-ish surface. It can’t wrap around an arm or show what’s hidden.</p>`;}
-  else if(e.tool==='blend'){h=step(`<input type="range" min="10" max="100" value="${Math.round(L.opacity*100)}" id="opr" aria-label="Opacity">`,'Opacity',Math.round(L.opacity*100)+'%')+`<div class="row" role="radiogroup" aria-label="Blend">${[['multiply','Ink (multiply)'],['darken','Darken'],['source-over','Normal']].map(([k,l])=>`<button class="nbtn" role="radio" data-bl="${k}" aria-checked="${L.blend===k}" aria-pressed="${L.blend===k}" style="font-size:12px;padding:0 10px">${l}</button>`).join('')}</div>`;}
-  else if(e.tool==='layers'){h=`${e.layers.map((x,i)=>`<div class="layer" aria-current="${i===e.sel}"><button class="nbtn" data-sel="${i}" style="flex:1;text-align:left;border:0;background:none">Layer ${i+1}${i===e.sel?' · selected':''}</button><button class="nbtn" data-vis="${i}" aria-pressed="${x.visible}" aria-label="${x.visible?'Hide':'Show'} layer ${i+1}">${x.visible?'Hide':'Show'}</button><button class="nbtn" data-up2="${i}" aria-label="Move layer ${i+1} up" ${i===e.layers.length-1?'disabled':''}>▲</button><button class="nbtn" data-del="${i}" aria-label="Remove layer ${i+1}">✕</button></div>`).join('')}
-    <div class="row"><button class="nbtn" data-add ${e.layers.length>=3?'disabled':''} style="padding:0 12px">+ Add design (${e.layers.length}/3)</button><span class="small" style="color:#bdb8ae">Photo layer is locked.</span></div>`;}
-  else if(e.tool==='scale'){const r=e.scaleRef;h=r?`<div class="row"><label for="sl" style="min-width:58px">Length</label><input id="sl" type="number" min="0.1" step="0.1" value="${r.length||''}" style="width:90px" class="nbtn"><select id="su" class="nbtn"><option ${r.unit==='cm'?'selected':''}>cm</option><option ${r.unit==='in'?'selected':''}>in</option></select><button class="nbtn" data-clr style="padding:0 10px;font-size:12px">Clear</button></div>
-     <div class="row">${['Point A','Point B'].map((n,i)=>`<button class="nbtn" data-pt="${i}" aria-pressed="${e.corner%2===i}" style="font-size:12px;padding:0 10px">${n}</button>`).join('')}${[['-1,0','←'],['0,-1','↑'],['0,1','↓'],['1,0','→']].map(([d,s])=>`<button class="nbtn" data-pm="${d}" aria-label="Move point ${s}">${s}</button>`).join('')}</div>
-     <p class="small" style="color:#bdb8ae">Line the yellow bar up with something you measured in the photo (a ruler, a card). ${sizeText()?'Design ≈ '+sizeText()+'.':''} Not a stencil spec.</p>`
-     :`<p class="small" style="color:#bdb8ae">Without a reference, INK STUDY shows only relative size. If something of known length is in the photo, add a reference line.</p><button class="nbtn" data-addref style="padding:0 12px">Add reference line</button>`;}
-  p.innerHTML=h;
-  const N=W*.01;
-  const act=(fn)=>{pushUndo();fn();e.draw();paintPanel();};
-  p.querySelectorAll('[data-mv]').forEach(b=>b.onclick=()=>act(()=>{const [dx,dy]=b.dataset.mv.split(',').map(Number);L.quad=qMove(L.quad,dx*N,dy*N);}));
-  p.querySelectorAll('[data-sz]').forEach(b=>b.onclick=()=>act(()=>L.quad=qScale(L.quad,+b.dataset.sz)));
-  const szr=p.querySelector('#szr');if(szr)szr.onchange=()=>act(()=>L.quad=qScale(L.quad,(+szr.value/100*W)/qWidth(L.quad)));
-  p.querySelectorAll('[data-rt]').forEach(b=>b.onclick=()=>act(()=>L.quad=qRot(L.quad,+b.dataset.rt*Math.PI/180)));
-  const rtr=p.querySelector('#rtr');if(rtr)rtr.onchange=()=>act(()=>L.quad=qRot(L.quad,+rtr.value*Math.PI/180-qAngle(L.quad)));
-  p.querySelectorAll('[data-cn]').forEach(b=>b.onclick=()=>{e.corner=+b.dataset.cn;e.draw();paintPanel();});
-  p.querySelectorAll('[data-cm]').forEach(b=>b.onclick=()=>act(()=>{const [dx,dy]=b.dataset.cm.split(',').map(Number);L.quad[e.corner]=[L.quad[e.corner][0]+dx*N,L.quad[e.corner][1]+dy*N];}));
-  const fl=p.querySelector('[data-flat]');if(fl)fl.onclick=()=>act(()=>{const c=cen(L.quad),w=qWidth(L.quad),h=w*L.img.height/L.img.width;L.quad=R.rectQuad(c[0],c[1],w,h,qAngle(L.quad));});
-  const opr=p.querySelector('#opr');if(opr)opr.onchange=()=>act(()=>L.opacity=+opr.value/100);
-  p.querySelectorAll('[data-bl]').forEach(b=>b.onclick=()=>act(()=>L.blend=b.dataset.bl));
-  p.querySelectorAll('[data-sel]').forEach(b=>b.onclick=()=>{e.sel=+b.dataset.sel;e.draw();paintPanel();});
-  p.querySelectorAll('[data-vis]').forEach(b=>b.onclick=()=>act(()=>{const x=e.layers[+b.dataset.vis];x.visible=!x.visible;}));
-  p.querySelectorAll('[data-up2]').forEach(b=>b.onclick=()=>act(()=>{const i=+b.dataset.up2;[e.layers[i],e.layers[i+1]]=[e.layers[i+1],e.layers[i]];e.sel=i+1;}));
-  p.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>act(()=>{e.layers.splice(+b.dataset.del,1);e.sel=Math.max(0,Math.min(e.sel,e.layers.length-1));}));
-  const add=p.querySelector('[data-add]');if(add)add.onclick=()=>{const ed=S.ed;go('designs',{pick:true});
-    // When a design is chosen from the library while editing, come back with it as a new layer
-    S.pickLayer=async a=>{const img=await assetImg(a.id);const H=ed.base.height,w=Math.min(ed.base.width,H)*.35;ed.undo.push(snap());ed.layers.push({design_asset_id:a.id,img,quad:R.rectQuad(ed.base.width/2,H/2,w,w*img.height/img.width,0),opacity:.88,blend:'multiply',visible:true});ed.sel=ed.layers.length-1;ed.tool='layers';ed.dirty=true;S.ed=ed;S.pickLayer=null;S.hist.pop();S.hist.pop();go('editor',{},{replace:true});};};
-  const ar=p.querySelector('[data-addref]');if(ar)ar.onclick=()=>act(()=>{const H=e.base.height;e.scaleRef={p1:[W*.3,H*.85],p2:[W*.7,H*.85],length:'',unit:'cm'};});
-  const sl=p.querySelector('#sl');if(sl){sl.onchange=()=>{e.scaleRef.length=parseFloat(sl.value)||'';e.dirty=true;paintPanel();e.draw();};p.querySelector('#su').onchange=ev=>{e.scaleRef.unit=ev.target.value;paintPanel();};
-    p.querySelector('[data-clr]').onclick=()=>act(()=>e.scaleRef=null);
-    p.querySelectorAll('[data-pt]').forEach(b=>b.onclick=()=>{e.corner=+b.dataset.pt;paintPanel();e.draw();});
-    p.querySelectorAll('[data-pm]').forEach(b=>b.onclick=()=>act(()=>{const [dx,dy]=b.dataset.pm.split(',').map(Number);const k=e.corner%2?'p2':'p1';e.scaleRef[k]=[e.scaleRef[k][0]+dx*N,e.scaleRef[k][1]+dy*N];}));}
-}
-async function saveVersion(){
-  const e=S.ed,W=e.base.width,H=e.base.height;
-  if(!e.layers.length)throw new Error('add at least one design');
-  const v={id:St.uid(),study_id:e.studyId,source_version:e.source,mode:'photo',body_asset_id:e.bodyId,
-    layers:e.layers.map(L=>({design_asset_id:L.design_asset_id,quad:L.quad.map(p=>[p[0]/W,p[1]/H]),opacity:L.opacity,blend:L.blend,visible:L.visible})),
-    scale_ref:e.scaleRef&&e.scaleRef.length?{p1:[e.scaleRef.p1[0]/W,e.scaleRef.p1[1]/H],p2:[e.scaleRef.p2[0]/W,e.scaleRef.p2[1]/H],length:e.scaleRef.length,unit:e.scaleRef.unit}:null,
-    size_text:sizeText()||null,created:Date.now(),schema_version:1,note:''};
-  const c=await renderVersion(v,900);v.thumb=await thumbOf(c);
-  await St.put('versions',v);const s=await St.get('studies',e.studyId);s.updated=Date.now();s.last_body=e.bodyId;await St.put('studies',s);return v;
-}
-// library pick while editing
-const _designBind=VIEWS.design.bind;
-VIEWS.design.bind=function(){_designBind();if(S.pickLayer){const b=app.querySelector('[data-use]');b.textContent='Add as a layer';b.onclick=async()=>S.pickLayer(await ensureDesignAsset(S.params.id));}};
-
-/* ---------- study detail ---------- */
-VIEWS.study={
-  html:async()=>{const s=await St.get('studies',S.params.id);if(!s)return `${topbar('Study')}<div class="empty">This study was deleted.</div>`;
-   const vs=await versionsOf(s.id);const cur=vs.find(v=>v.id===S.params.v)||vs[vs.length-1];S.params.cur=cur&&cur.id;
-   const design=cur&&cur.layers&&cur.layers[0]?await St.get('assets',cur.layers[0].design_asset_id):null;
-   return `${topbar('Study',{right:`<button class="iconbtn" data-menu aria-label="Study options">⋯</button>`})}<div class="scroll stack">
-    <div class="eyebrow">${esc(s.body_region)}</div><h1>${esc(s.title)}</h1>
-    ${cur?`<div style="position:relative;background:#111"><img alt="${esc(MODE_LABEL[cur.mode])}: ${esc(s.title)}" src="${url(cur.thumb)}" style="width:100%;max-height:380px;object-fit:contain;display:block">${cur.mode==='ar_marker'?`<span class="watermark">AR MARKER STUDY</span>`:''}</div>
-    <div class="row" style="flex-wrap:wrap"><span class="tag ${cur.mode==='scenario'?'red':''}">${MODE_LABEL[cur.mode]}</span>${cur.preferred?'<span class="tag solid">Preferred</span>':''}<span class="small muted">${new Date(cur.created).toLocaleString()}</span></div>
-    <p class="small muted">${cur.size_text?'Size ≈ '+esc(cur.size_text)+' from your reference — perspective adds error.':'No measured reference — size is relative to the photo only.'}${design?' · Design: '+esc(design.name)+' ('+esc(design.rights_source.replace('library:','library · ').replace('user:','you · '))+')':''}</p>
-    ${cur.mode==='scenario'?`<p class="notice">Illustration with your chosen settings (${esc(cur.scenario.label||cur.scenario.preset)}). It does not predict how your tattoo or skin will look.</p>`:''}
-    ${cur.mode==='ar_marker'?`<p class="small muted">Captured live with marker ${esc(cur.ar.target_version)} · tracking ${esc(cur.ar.tracking_state)} at capture.</p>`:''}`
-    :'<div class="empty">No saved versions yet.</div>'}
-    <div class="label">Versions (${vs.length})</div>
-    <div class="vstrip" role="list">${vs.map(v=>`<button role="listitem" data-v="${v.id}" aria-current="${cur&&v.id===cur.id}"><img alt="" src="${url(v.thumb)}"><span>${MODE_LABEL[v.mode]}${v.preferred?' · ★':''}<br>${new Date(v.created).toLocaleDateString()}</span></button>`).join('')}</div>
-    <div class="grid2">
-     <button class="btn" data-edit ${cur&&cur.mode==='photo'?'':'disabled'}>Duplicate & edit</button>
-     <button class="btn" data-ar>Try in live AR</button>
-     <button class="btn" data-cmp ${vs.length>1?'':'disabled'}>Compare</button>
-     <button class="btn" data-sc ${cur&&cur.mode!=='scenario'?'':'disabled'}>Change study</button>
-    </div>
-    ${vs.length<2?'<p class="small muted">Compare needs two versions — duplicate & edit to try another placement or size.</p>':''}
-    <button class="btn primary block" data-cons>Prepare consultation</button>
-   </div>`;},
-  bind(){
-    const id=S.params.id,cur=S.params.cur;
-    app.querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>{S.params.v=b.dataset.v;render();});
-    const q=s=>app.querySelector(s);
-    if(q('[data-edit]'))q('[data-edit]').onclick=async()=>{const v=await St.get('versions',cur);startEditor({studyId:id,bodyId:v.body_asset_id,layers:v.layers,scaleRef:v.scale_ref,source:v.id});};
-    if(q('[data-ar]'))q('[data-ar]').onclick=async()=>{const v=cur&&await St.get('versions',cur);go('arsetup',{study:id,design:v&&v.layers?v.layers[0].design_asset_id:null});};
-    if(q('[data-cmp]'))q('[data-cmp]').onclick=()=>go('compare',{study:id});
-    if(q('[data-sc]'))q('[data-sc]').onclick=()=>go('scinfo',{version:cur});
-    if(q('[data-cons]'))q('[data-cons]').onclick=()=>go('consult',{study:id});
-    if(q('[data-menu]'))q('[data-menu]').onclick=()=>studyMenu(id,cur);
-  }
-};
-async function studyMenu(id,vid){
-  const s=await St.get('studies',id),v=vid&&await St.get('versions',vid);const w=document.createElement('div');
-  w.innerHTML=`<div class="scrim"></div><div class="sheet" role="dialog" aria-modal="true" aria-label="Study options"><div class="sb stack">
-   <div class="field"><label class="label" for="rn">Rename study</label><input id="rn" value="${esc(s.title)}" maxlength="40"></div>
-   ${v?`<button class="btn block" data-pref>${v.preferred?'Unmark preferred':'Mark this version preferred'}</button><button class="btn danger block" data-dv>Delete this version</button>`:''}
-   <button class="btn danger block" data-ds>Delete study and its photos</button></div><div class="sf"><button class="btn primary block" data-done>Done</button></div></div>`;
-  app.appendChild(w);const close=()=>{w.remove();render();};
-  w.querySelector('.scrim').onclick=close;
-  w.querySelector('[data-done]').onclick=async()=>{const t=w.querySelector('#rn').value.trim();if(t&&t!==s.title){s.title=t;s.updated=Date.now();await St.put('studies',s);}close();};
-  const pf=w.querySelector('[data-pref]');if(pf)pf.onclick=async()=>{v.preferred=!v.preferred;await St.put('versions',v);close();};
-  const dv=w.querySelector('[data-dv]');if(dv)dv.onclick=async()=>{if(!await confirmDlg('Delete this version?','Other versions and the original photo stay.','Delete version',true))return;await St.del('versions',v.id);w.remove();S.params.v=null;render();};
-  w.querySelector('[data-ds]').onclick=async()=>{const vs=await versionsOf(id);const bodies=[...new Set(vs.map(x=>x.body_asset_id).concat(s.last_body))].filter(Boolean);
-    if(!await confirmDlg(`Delete “${s.title}”?`,`Removes ${vs.length} versions and ${bodies.length} body photo(s) from this device. Files you already exported aren’t affected.`,'Delete study',true))return;
-    for(const x of vs){await St.del('versions',x.id);if(x.capture_asset_id)await St.del('assets',x.capture_asset_id);}
-    const others=(await St.all('versions'));for(const b of bodies){if(!others.some(o=>o.body_asset_id===b))await St.del('assets',b);}
-    await St.del('studies',id);w.remove();toast('Study deleted.');S.hist=[];go('studio',{},{replace:true});};
-}
-
-/* ---------- compare ---------- */
-VIEWS.compare={
-  html:async()=>{const all=(await St.all('versions')).sort((a,b)=>b.created-a.created);const ss=await St.all('studies');
-   const name=v=>{const s=ss.find(x=>x.id===v.study_id);return (s?s.title:'Study')+' · '+MODE_LABEL[v.mode]+' · '+new Date(v.created).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit'});};
-   if(all.length<2)return `${S.params.study?topbar('Compare'):'<div class="topbar"></div>'}<div class="scroll stack"><h1>Compare</h1><div class="empty">You need at least two saved versions. Open a study and use “Duplicate & edit”.</div></div>${S.params.study?'':tabs('compare')}`;
-   const inStudy=S.params.study?all.filter(v=>v.study_id===S.params.study):all;
-   const A=S.params.a||(inStudy[1]||all[1]).id,B=S.params.b||(inStudy[0]||all[0]).id;S.params.a=A;S.params.b=B;
-   const va=all.find(v=>v.id===A),vb=all.find(v=>v.id===B);const mode=S.params.m||'wipe';const same=va.body_asset_id===vb.body_asset_id&&va.mode!=='ar_marker'&&vb.mode!=='ar_marker';
-   const opt=sel=>all.map(v=>`<option value="${v.id}" ${v.id===sel?'selected':''}>${esc(name(v))}</option>`).join('');
-   const diff=[];if(va.mode!==vb.mode)diff.push(`Modes differ: A is ${MODE_LABEL[va.mode]}, B is ${MODE_LABEL[vb.mode]}.`);
-   if(va.layers&&vb.layers&&va.layers.length!==vb.layers.length)diff.push(`A has ${va.layers.length} design layer(s), B has ${vb.layers.length}.`);
-   if(va.size_text||vb.size_text)diff.push(`Rough size — A: ${va.size_text||'not calibrated'}; B: ${vb.size_text||'not calibrated'}.`);
-   if(va.layers&&vb.layers&&va.layers[0]&&vb.layers[0]){const w=v=>Math.hypot(v.layers[0].quad[1][0]-v.layers[0].quad[0][0],v.layers[0].quad[1][1]-v.layers[0].quad[0][1]);const r=w(vb)/w(va);if(same&&Math.abs(r-1)>.03)diff.push(`B’s design is ${Math.round(Math.abs(r-1)*100)}% ${r>1?'wider':'narrower'} than A’s on the same photo.`);}
-   return `${S.params.study?topbar('Compare'):'<div class="topbar"></div>'}<div class="scroll stack"><h1>Compare</h1>
-    <div class="field"><label class="label" for="ca">A</label><select id="ca">${opt(A)}</select></div>
-    <div class="field"><label class="label" for="cb">B</label><select id="cb">${opt(B)}</select></div>
-    <div class="chips" role="radiogroup" aria-label="View">${[['wipe','Wipe'],['side','Side by side'],['toggle','Toggle']].map(([k,l])=>`<button class="chip" role="radio" aria-checked="${mode===k}" data-m="${k}">${l}</button>`).join('')}</div>
-    ${!same?'<p class="notice">Different photos or a live capture — the two images aren’t aligned, so compare placement by eye. Retake on the same photo for a precise comparison.</p>':''}
-    <div id="cmpbox"></div>
-    <div class="stack" style="gap:6px">${diff.map(d=>`<p class="small">${esc(d)}</p>`).join('')||'<p class="small muted">Same mode and layer count.</p>'}</div>
-    <div class="row"><button class="btn" style="flex:1" data-pa>${va.preferred?'★ A preferred':'Prefer A'}</button><button class="btn" style="flex:1" data-pb>${vb.preferred?'★ B preferred':'Prefer B'}</button></div>
-   </div>${S.params.study?'':tabs('compare')}`;},
-  async bind(){
-    if(!S.params.a)return;
-    const va=await St.get('versions',S.params.a),vb=await St.get('versions',S.params.b);
-    const [ia,ib]=await Promise.all([renderVersion(va,1000),renderVersion(vb,1000)]);
-    const da=ia.toDataURL('image/jpeg',.85),db=ib.toDataURL('image/jpeg',.85);const box=app.querySelector('#cmpbox');const m=S.params.m||'wipe';
-    if(m==='wipe'){box.innerHTML=`<div class="cmp" id="cw" style="--cut:50%"><img alt="Version A" src="${da}"><img class="top" alt="Version B" src="${db}"><div class="line"></div><span class="lab" style="left:8px">A</span><span class="lab" style="right:8px">B</span></div>
-      <div class="row"><button class="nbtn btn" data-w="-10" aria-label="Show more of A" style="min-width:48px">◀</button><input type="range" id="wr" min="0" max="100" value="50" aria-label="Wipe position: left shows A, right shows B" style="flex:1;accent-color:#8D3027"><button class="btn" data-w="10" aria-label="Show more of B" style="min-width:48px">▶</button></div>`;
-      const cw=box.querySelector('#cw'),wr=box.querySelector('#wr');const set=v=>{wr.value=v;cw.style.setProperty('--cut',v+'%');};wr.oninput=()=>set(wr.value);box.querySelectorAll('[data-w]').forEach(b=>b.onclick=()=>set(Math.max(0,Math.min(100,+wr.value+ +b.dataset.w))));}
-    if(m==='side')box.innerHTML=`<div class="side"><figure><img alt="Version A" src="${da}"><figcaption>A · ${MODE_LABEL[va.mode]}</figcaption></figure><figure><img alt="Version B" src="${db}"><figcaption>B · ${MODE_LABEL[vb.mode]}</figcaption></figure></div>`;
-    if(m==='toggle'){let showB=false;box.innerHTML=`<div class="cmp"><img id="ti" alt="Version A" src="${da}"><span class="lab" id="tl" style="left:8px">A</span></div><button class="btn block" id="tb" style="margin-top:8px">Show B</button>`;
-      box.querySelector('#tb').onclick=()=>{showB=!showB;const i=box.querySelector('#ti');i.src=showB?db:da;i.alt='Version '+(showB?'B':'A');box.querySelector('#tl').textContent=showB?'B':'A';box.querySelector('#tb').textContent='Show '+(showB?'A':'B');announce('Showing version '+(showB?'B':'A'));};}
-    app.querySelector('#ca').onchange=e=>{S.params.a=e.target.value;render();};app.querySelector('#cb').onchange=e=>{S.params.b=e.target.value;render();};
-    app.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>{S.params.m=b.dataset.m;render();});
-    const pref=async(x)=>{x.preferred=!x.preferred;await St.put('versions',x);render();};
-    app.querySelector('[data-pa]').onclick=()=>pref(va);app.querySelector('[data-pb]').onclick=()=>pref(vb);
-  }
-};
-
-/* ---------- change study ---------- */
-VIEWS.scinfo={
-  html:()=>`${topbar('Change study')}<div class="scroll stack"><div class="eyebrow">Before you start</div><h2>An illustration, not a forecast</h2>
-   <p>This tool lets you <b>picture</b> softer, lighter or blurrier versions of your design so you can ask your artist about them.</p>
-   <p>It <b>can’t</b> tell you how <i>your</i> tattoo will look in 5 or 10 years. How ink changes depends on things like sun exposure, aftercare, placement, ink and technique — and INK STUDY has no data that turns those into a personal prediction.</p>
-   <p class="small muted">The general fact that sun exposure can fade tattoo ink comes from the American Academy of Dermatology’s tattoo care guidance. Nothing here asks for your weight, health or skin details.</p>
-  </div><div class="foot"><button class="btn primary block" data-ok>I understand — continue</button><button class="btn ghost block" data-skip>Skip to consultation</button></div>`,
-  bind(){app.querySelector('[data-ok]').onclick=()=>go('scenario',{version:S.params.version});app.querySelector('[data-skip]').onclick=async()=>{const v=await St.get('versions',S.params.version);go('consult',{study:v.study_id});};}
-};
-const PRESETS={soft:{fade:.15,spread:.15,desat:.15,warp:0,label:'Soft'},medium:{fade:.35,spread:.35,desat:.35,warp:.2,label:'Medium'},strong:{fade:.6,spread:.6,desat:.55,warp:.4,label:'Strong'}};
-VIEWS.scenario={
-  html:()=>{const p=S.params.p||Object.assign({preset:'medium'},PRESETS.medium);S.params.p=p;
-   const sl=(k,l,d)=>`<div class="field"><div class="row" style="justify-content:space-between"><label class="label" for="s-${k}">${l}</label><span class="small muted">${Math.round(p[k]*100)}</span></div><input type="range" id="s-${k}" min="0" max="100" value="${Math.round(p[k]*100)}" style="accent-color:#8D3027"><span class="hint">${d}</span></div>`;
-   return `${topbar('Settings')}<div class="scroll stack"><div class="cmp" style="aspect-ratio:3/4"><canvas id="scc" style="width:100%;height:100%;object-fit:contain" aria-label="Illustration preview"></canvas><span class="watermark">SCENARIO ILLUSTRATION</span></div>
-    <div class="chips" role="radiogroup" aria-label="Preset">${Object.entries(PRESETS).map(([k,v])=>`<button class="chip" role="radio" aria-checked="${p.preset===k}" data-pre="${k}">${v.label}</button>`).join('')}</div>
-    ${sl('fade','Lighter ink','Lowers ink opacity and shifts it slightly cooler.')}${sl('spread','Softer edges','Blurs line edges.')}${sl('desat','Less color','Moves colors toward grey.')}${sl('warp','Shape shift','A small geometric stretch — a drawing aid, not a body prediction.')}
-    <div class="field"><label class="label" for="yl">Your label <span class="muted">(optional)</span></label><input id="yl" maxlength="24" placeholder="e.g. “what if — 10 years”" value="${esc(p.yearLabel||'')}"><span class="hint">A name for this illustration only. It isn’t linked to any timeline.</span></div>
-    <button class="btn ghost" data-reset>Reset</button></div><div class="foot"><button class="btn primary block" data-make>Save illustration</button></div>`;},
-  async bind(){
-    const v=await St.get('versions',S.params.version),p=S.params.p;const c=app.querySelector('#scc');
-    const base=await assetImg(v.body_asset_id);const layers=[];for(const L of v.layers)layers.push(Object.assign({},L,{img:await assetImg(L.design_asset_id)}));
-    let t=0;const draw=()=>{clearTimeout(t);t=setTimeout(()=>R.composite(base,layers,{canvas:c,max:700,scenario:p}),40);};draw();
-    ['fade','spread','desat','warp'].forEach(k=>{const r=app.querySelector('#s-'+k);r.oninput=()=>{p[k]=+r.value/100;p.preset='custom';r.closest('.field').querySelector('.small').textContent=r.value;app.querySelectorAll('[data-pre]').forEach(x=>x.setAttribute('aria-checked','false'));draw();};});
-    app.querySelectorAll('[data-pre]').forEach(b=>b.onclick=()=>{Object.assign(p,PRESETS[b.dataset.pre],{preset:b.dataset.pre});render();});
-    app.querySelector('#yl').oninput=e=>p.yearLabel=e.target.value;
-    app.querySelector('[data-reset]').onclick=()=>{S.params.p=Object.assign({preset:'soft'},PRESETS.soft);render();};
-    app.querySelector('[data-make]').onclick=async()=>{const sc={fade:p.fade,spread:p.spread,desat:p.desat,warp:p.warp,preset:p.preset,label:(p.yearLabel||'').trim()||PRESETS[p.preset]&&PRESETS[p.preset].label||'Custom'};
-      const nv={id:St.uid(),study_id:v.study_id,source_version:v.id,mode:'scenario',body_asset_id:v.body_asset_id,layers:v.layers,scale_ref:v.scale_ref,size_text:v.size_text,scenario:sc,illustration_flag:true,software:'ink-study-1.0',created:Date.now(),schema_version:1};
-      const out=await renderVersion(nv,900);nv.thumb=await thumbOf(out);await St.put('versions',nv);go('scresult',{version:nv.id},{replace:true});};
-  }
-};
-VIEWS.scresult={
-  html:async()=>{const v=await St.get('versions',S.params.version);const src=await St.get('versions',v.source_version);
-   return `${topbar('Illustration')}<div class="scroll stack"><div class="side"><figure><img alt="Original version" src="${url(src.thumb)}"><figcaption>Original · ${MODE_LABEL[src.mode]}</figcaption></figure><figure style="position:relative"><img alt="Scenario illustration" src="${url(v.thumb)}"><figcaption>Scenario illustration · ${esc(v.scenario.label)}</figcaption></figure></div>
-    <div class="qcard"><div class="label">Settings used</div><p class="small">Lighter ink ${Math.round(v.scenario.fade*100)} · Softer edges ${Math.round(v.scenario.spread*100)} · Less color ${Math.round(v.scenario.desat*100)} · Shape shift ${Math.round(v.scenario.warp*100)} · generated ${new Date(v.created).toLocaleString()} by INK STUDY 1.0</p>
-     <div class="label">What this can’t tell you</div><p class="small">How your own tattoo will age, how fast, or whether this design suits this spot. Those are questions for your artist.</p></div>
-    <div class="qcard" id="aibox"><div class="label">Questions to bring</div><p class="small muted">Draft questions from your settings — you edit them before anything is shared.</p><button class="btn" data-ai>Draft questions with AI</button></div>
-   </div><div class="foot"><button class="btn primary block" data-cons>Add to consultation</button><button class="btn block" data-study>Back to study</button></div>`;},
-  bind(){const id=S.params.version;app.querySelector('[data-ai]').onclick=()=>draftQuestions(id,app.querySelector('#aibox'));
-    app.querySelector('[data-cons]').onclick=async()=>{const v=await St.get('versions',id);go('consult',{study:v.study_id,pre:[id]});};
-    app.querySelector('[data-study]').onclick=async()=>{const v=await St.get('versions',id);goStudy(v.study_id,id);};}
-};
-async function callAI(body){const ctl=new AbortController();const t=setTimeout(()=>ctl.abort(),20000);
-  try{const r=await fetch('/api/ai',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:ctl.signal});const j=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(j.error||'failed');e.code=j.code;throw e;}return j;}
-  catch(e){if(e.name==='AbortError'){const x=new Error('The model took too long.');x.code='TIMEOUT';throw x;}throw e;}finally{clearTimeout(t);}}
-async function draftQuestions(versionId,box,extra){
-  const v=await St.get('versions',versionId),s=await St.get('studies',v.study_id);const d=v.layers&&v.layers[0]?await St.get('assets',v.layers[0].design_asset_id):null;
-  box.innerHTML='<div class="label">Questions to bring</div><p class="small" role="status">Drafting…</p>';
-  try{const r=await callAI({task:'ink-questions',design:d?d.name:'custom design',region:s.body_region,size:v.size_text||'relative only',intent:(extra&&extra.intent)||'',concerns:(extra&&extra.concerns)||'',scenario:v.scenario?`${v.scenario.label}: lighter ${Math.round(v.scenario.fade*100)}, softer ${Math.round(v.scenario.spread*100)}`:''});
-    S.aiDraft={questions:r.questions,sources:r.sources,limitations:r.limitations,ai:true};
-    box.innerHTML=`<div class="label">Draft questions <span class="tag">AI draft · edit freely</span></div>${r.summary?`<p class="small muted">${esc(r.summary)}</p>`:''}<ol style="margin:0;padding-left:18px">${r.questions.map(q=>`<li>${esc(q.text)}</li>`).join('')}</ol>
-     ${r.limitations&&r.limitations.length?`<p class="small muted">${r.limitations.map(esc).join(' ')}</p>`:''}${r.sources&&r.sources.length?`<p class="small">Sources: ${r.sources.map(x=>esc(x.src)).join('; ')}</p>`:''}<p class="small muted">These go into your consultation draft, where you can edit or delete them.</p>`;}
-  catch(e){box.innerHTML=`<div class="label">Questions to bring</div><p class="small" role="alert">${e.code==='NO_MODEL'?'AI drafting isn’t connected on this deployment.':esc(e.message)} You can write your own questions in the consultation step — nothing is lost.</p>`;}
-}
-
-/* ---------- consultation ---------- */
-const STARTERS=['Is this size right for the detail in the design?','Would you adjust the placement for how this area moves?','How would you approach the line weight here?','What aftercare do you recommend for this spot?'];
-VIEWS.consult={
-  html:async()=>{const ss=await studies();if(!ss.length)return `<div class="topbar"></div><div class="scroll stack"><h1>Consult</h1><div class="empty">Create a study first, then come back to package it for your artist.</div><button class="btn primary" data-new>New study</button></div>${tabs('consult')}`;
-   const sid=S.params.study||ss[0].id;S.params.study=sid;const vs=await versionsOf(sid);
-   const P=S.pkg&&S.pkg.study===sid?S.pkg:(S.pkg={study:sid,title:(ss.find(s=>s.id===sid)||{}).title||'',versions:(S.params.pre||vs.filter(v=>v.preferred).map(v=>v.id)).slice(0,3),intent:'',questions:[],includeOriginal:false});
-   return `${S.hist.length?topbar('Consultation'):'<div class="topbar"></div>'}<div class="scroll stack"><div class="eyebrow">Consultation package</div><h1>For your artist</h1>
-    <div class="field"><label class="label" for="cs">Study</label><select id="cs">${ss.map(s=>`<option value="${s.id}" ${s.id===sid?'selected':''}>${esc(s.title)}</option>`).join('')}</select></div>
-    <div class="field"><label class="label" for="pt">Package title</label><input id="pt" maxlength="60" value="${esc(P.title)}"></div>
-    <div class="label">Versions to include (up to 3)</div>
-    ${vs.length?vs.map(v=>`<label class="check"><input type="checkbox" data-iv="${v.id}" ${P.versions.includes(v.id)?'checked':''}><img src="${url(v.thumb)}" alt="" style="width:56px;height:56px;object-fit:cover"><span><b>${MODE_LABEL[v.mode]}</b>${v.preferred?' · preferred':''}<br><span class="small muted">${new Date(v.created).toLocaleString()}</span></span></label>`).join(''):'<p class="small muted">This study has no versions yet.</p>'}
-    <label class="check"><input type="checkbox" id="io" ${P.includeOriginal?'checked':''}><span>Also include the unedited body photo<br><span class="small muted">Off by default. Edited versions are always the cropped photo you saved.</span></span></label>
-    <div class="field"><label class="label" for="pi">What you’re hoping for</label><textarea id="pi" maxlength="400" placeholder="e.g. Small and delicate, visible when I roll my sleeves.">${esc(P.intent)}</textarea></div>
-    <p class="err" id="perr" role="alert"></p>
-   </div><div class="foot"><button class="btn primary block" data-next>Next: questions</button></div>${S.hist.length?'':tabs('consult')}`;},
-  bind(){
-    const n=app.querySelector('[data-new]');if(n){n.onclick=()=>{S.new={};go('source');};return;}
-    const P=S.pkg;app.querySelector('#cs').onchange=e=>{S.params.study=e.target.value;S.params.pre=null;S.pkg=null;render();};
-    app.querySelector('#pt').oninput=e=>P.title=e.target.value;app.querySelector('#pi').oninput=e=>P.intent=e.target.value;app.querySelector('#io').onchange=e=>P.includeOriginal=e.target.checked;
-    app.querySelectorAll('[data-iv]').forEach(c=>c.onchange=()=>{const id=c.dataset.iv;if(c.checked){if(P.versions.length>=3){c.checked=false;app.querySelector('#perr').textContent='Up to 3 versions keeps the package easy to read.';return;}P.versions.push(id);}else P.versions=P.versions.filter(x=>x!==id);app.querySelector('#perr').textContent='';});
-    app.querySelector('[data-next]').onclick=()=>{if(!P.title.trim()){app.querySelector('#perr').textContent='Add a package title.';return;}if(!P.versions.length){app.querySelector('#perr').textContent='Pick at least one version.';return;}go('questions');};
-  }
-};
-VIEWS.questions={
-  html:()=>{const P=S.pkg;if(!P.questions.length&&S.aiDraft&&S.aiDraft.questions){P.questions=S.aiDraft.questions.map(q=>({text:q.text,group:q.group,ai:true}));P.sources=S.aiDraft.sources||[];S.aiDraft=null;}
-   return `${topbar('Questions')}<div class="scroll stack"><h2>Questions for your artist</h2><p class="small muted">Write your own, start from a prompt, or draft with AI. Nothing is sent until you export.</p>
-    <div id="qs" class="stack">${P.questions.map((q,i)=>`<div class="qcard"><label class="label" for="q${i}">${q.ai?'AI draft':'Question'} ${i+1} <span class="muted small">· ${esc(q.group||'other')}</span></label><textarea id="q${i}" data-q="${i}" maxlength="240" style="min-height:64px;border:1px solid #8a857c;border-radius:6px;padding:8px">${esc(q.text)}</textarea><button class="btn ghost" data-rm="${i}" style="align-self:flex-end;min-height:36px">Remove</button></div>`).join('')||'<p class="empty small">No questions yet.</p>'}</div>
-    <button class="btn" data-addq>+ Write a question</button>
-    <div class="chips" aria-label="Starter prompts written by INK STUDY">${STARTERS.map((s,i)=>`<button class="chip" data-st="${i}">${esc(s)}</button>`).join('')}</div>
-    <div class="field"><label class="label" for="cc">Anything you’re unsure about? <span class="muted">(helps the AI draft)</span></label><textarea id="cc" maxlength="300">${esc(P.concerns||'')}</textarea></div>
-    <div id="aibox2"></div><button class="btn" data-ai>Draft with AI</button>
-   </div><div class="foot"><button class="btn primary block" data-next>Review package</button></div>`;},
-  bind(){const P=S.pkg;
-    app.querySelectorAll('[data-q]').forEach(t=>t.oninput=()=>{P.questions[+t.dataset.q].text=t.value;});
-    app.querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{P.questions.splice(+b.dataset.rm,1);render();});
-    app.querySelector('[data-addq]').onclick=()=>{P.questions.push({text:'',group:'other'});render();const t=app.querySelector(`#q${P.questions.length-1}`);t&&t.focus();};
-    app.querySelectorAll('[data-st]').forEach(b=>b.onclick=()=>{P.questions.push({text:STARTERS[+b.dataset.st],group:'other'});render();});
-    app.querySelector('#cc').oninput=e=>P.concerns=e.target.value;
-    app.querySelector('[data-ai]').onclick=async()=>{const box=app.querySelector('#aibox2');await draftQuestions(P.versions[0],box,{intent:P.intent,concerns:P.concerns});
-      if(S.aiDraft){P.questions=P.questions.filter(q=>q.text.trim()).concat(S.aiDraft.questions.map(q=>({text:q.text,group:q.group,ai:true})));P.sources=S.aiDraft.sources||[];S.aiDraft=null;render();}};
-    app.querySelector('[data-next]').onclick=()=>{P.questions=P.questions.filter(q=>q.text.trim());go('preview');};}
-};
-VIEWS.preview={
-  html:async()=>{const P=S.pkg;const s=await St.get('studies',P.study);const vs=[];for(const id of P.versions)vs.push(await St.get('versions',id));
-   return `${topbar('Review package')}<div class="scroll stack"><div class="eyebrow">${esc(s.body_region)}</div><h1>${esc(P.title)}</h1>
-    ${vs.map((v,i)=>`<figure style="margin:0;position:relative"><img src="${url(v.thumb)}" alt="Version ${i+1}" style="width:100%;display:block">${v.mode==='ar_marker'?`<span class="watermark">AR MARKER STUDY</span>`:''}<figcaption class="small" style="margin-top:4px">Version ${i+1} · ${MODE_LABEL[v.mode]}${v.size_text?' · ≈ '+esc(v.size_text):' · size not calibrated'}</figcaption></figure>`).join('')}
-    ${P.includeOriginal?'<p class="small"><b>+ unedited body photo</b></p>':'<p class="small muted">Unedited body photo: not included.</p>'}
-    ${P.intent?`<div><div class="label">Hoping for</div><p>${esc(P.intent)}</p></div>`:''}
-    <div><div class="label">Questions</div>${P.questions.length?`<ol style="padding-left:18px;margin:4px 0">${P.questions.map(q=>`<li>${esc(q.text)}${q.ai?' <span class="small muted">(AI-drafted, reviewed by me)</span>':''}</li>`).join('')}</ol>`:'<p class="small muted">None.</p>'}</div>
-    <p class="small muted">The PDF is built on this device. Images are re-encoded without location data. Sending it doesn’t mean your artist has read it.</p>
-    <p id="xmsg" role="status" class="small"></p>
-   </div><div class="foot"><button class="btn primary block" data-share>Share PDF</button><button class="btn block" data-dl>Download PDF</button></div>`;},
-  bind(){const go2=async share=>{const m=app.querySelector('#xmsg');m.textContent='Building PDF…';
-      try{const blob=await buildPDF();const name=(S.pkg.title||'consultation').replace(/[^\w-]+/g,'-').toLowerCase()+'.pdf';const file=new File([blob],name,{type:'application/pdf'});
-        if(share&&navigator.canShare&&navigator.canShare({files:[file]})){try{await navigator.share({files:[file],title:S.pkg.title});m.textContent='Handed to your share sheet. Whether it was delivered depends on the app you chose.';}catch(e){m.textContent=e.name==='AbortError'?'Sharing cancelled. Your package is still here.':'Sharing failed — try Download instead.';}}
-        else{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>a.remove(),500);m.textContent=share?'This browser can’t share files, so the PDF was downloaded instead.':'PDF downloaded.';}}
-      catch(e){m.textContent='Couldn’t build the PDF: '+e.message;}};
-    app.querySelector('[data-share]').onclick=()=>go2(true);app.querySelector('[data-dl]').onclick=()=>go2(false);}
-};
-function loadScript(src){return new Promise((res,rej)=>{if([...document.scripts].some(s=>s.src===src))return res();const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('Couldn’t load the PDF library — check your connection.'));document.head.appendChild(s);});}
-async function buildPDF(){
-  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
-  const {jsPDF}=window.jspdf;const P=S.pkg;const s=await St.get('studies',P.study);const doc=new jsPDF({unit:'pt',format:'a4'});const W=595,M=48;let y=M;
-  const text=(t,size,opt)=>{doc.setFontSize(size);doc.setFont('helvetica',opt&&opt.bold?'bold':'normal');doc.setTextColor(opt&&opt.color||'#20201E');const lines=doc.splitTextToSize(String(t).replace(/[^\x20-\x7E -ÿ]/g,'?'),W-2*M);for(const l of lines){if(y>800){doc.addPage();y=M;}doc.text(l,M,y);y+=size*1.35;}};
-  text('INK STUDY · CONSULTATION PACKAGE',9,{color:'#8D3027',bold:true});y+=4;text(P.title,22,{bold:true});text(`${s.body_region} · prepared ${new Date().toLocaleDateString()}`,10,{color:'#625E57'});y+=8;
-  if(P.intent){text('Hoping for',11,{bold:true});text(P.intent,11);y+=6;}
-  for(let i=0;i<P.versions.length;i++){const v=await St.get('versions',P.versions[i]);const c=await renderVersion(v,1400);const k=Math.min((W-2*M)/c.width,420/c.height);
-    if(y+c.height*k+40>800){doc.addPage();y=M;}doc.addImage(c.toDataURL('image/jpeg',.88),'JPEG',M,y,c.width*k,c.height*k);y+=c.height*k+14;
-    text(`Version ${i+1} — ${MODE_LABEL[v.mode]}${v.mode==='scenario'?' (illustration with chosen settings; not a prediction)':''}${v.size_text?' — approx. '+v.size_text+' from a user reference':' — size not calibrated'}`,10,{color:'#625E57'});y+=8;}
-  if(P.includeOriginal){const v=await St.get('versions',P.versions[0]);const a=v.body_asset_id&&await assetImg(v.body_asset_id);if(a){const c=document.createElement('canvas');const k0=Math.min(1,1400/Math.max(a.width,a.height));c.width=a.width*k0;c.height=a.height*k0;c.getContext('2d').drawImage(a,0,0,c.width,c.height);const k=Math.min((W-2*M)/c.width,380/c.height);if(y+c.height*k>800){doc.addPage();y=M;}doc.addImage(c.toDataURL('image/jpeg',.88),'JPEG',M,y,c.width*k,c.height*k);y+=c.height*k+14;text('Unedited body photo',10,{color:'#625E57'});}}
-  if(P.questions.length){y+=6;text('Questions',13,{bold:true});P.questions.forEach((q,i)=>text(`${i+1}. ${q.text}${q.ai?' (AI-drafted, reviewed by me)':''}`,11));}
-  if(P.sources&&P.sources.length){y+=6;text('Sources: '+P.sources.map(x=>x.src).join('; '),9,{color:'#625E57'});}
-  y+=10;text('Photo and AR previews are approximate: flat-surface placement, no curvature or skin texture. Sizes are rough unless measured with a stencil. Scenario illustrations show chosen settings only.',9,{color:'#625E57'});
-  return doc.output('blob');
-}
-
-/* ---------- AR ---------- */
-const desktop=()=>!matchMedia('(pointer:coarse)').matches;
-const libOf=id=>id&&id.startsWith('asset-lib-')?id.slice(6):null;
-const HIRO='https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/data/images/hiro.png';
-function loadQRLib(){return window.QRCode?Promise.resolve():new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
-VIEWS.arsetup={
-  html:()=>{const lib=libOf(S.params.design);const dk=desktop();
-   return `${topbar('Live AR')}<div class="scroll stack"><div class="eyebrow">Limited planar tracking</div><h2>Live AR with a marker card</h2>
-   ${dk?`<div class="qcard"><div class="label">On a computer? Use your phone for real AR</div>
-     <div id="arqr" style="display:grid;place-items:center;background:#fff;padding:10px;min-height:190px" aria-label="QR code that opens live AR on your phone"><span class="small muted">Loading QR…</span></div>
-     <p class="small">Scan with your phone camera. It opens live AR with ${lib?'this design':'a library design you pick'} — the phone saves its own captures${lib?'':' (designs you uploaded stay on this computer)'}.</p>
-     <button class="btn block" data-sim>Preview on this computer (simulated)</button>
-     <p class="small muted">The computer preview fakes the tracking so you can see how AR mode behaves. Its frames aren’t saved as AR versions.</p></div>`:''}
-   <div class="marker"><img src="${HIRO}" alt="The Hiro marker: a black square with the word Hiro inside"></div>
-   <ol style="padding-left:20px;margin:0" class="stack"><li>Print this card (about 6–8 cm wide) or show it on another screen.</li><li>Hold or lay it <b>flat, right next to</b> the spot — don’t stick it to skin.</li><li>Point your phone camera at it. The design appears on the card’s plane and follows it.</li></ol>
-   <p class="small muted">The card is a flat reference. It doesn’t scan your arm’s curve, and the design won’t bend around it. If the card leaves the view, the design pauses — it never floats on its own.</p>
-   <a class="btn block" href="${HIRO}" target="_blank" rel="noopener" download>Open printable card</a>
-   <p class="err" id="arerr" role="alert"></p></div><div class="foot"><button class="btn ${dk?'':'primary'} block" data-start ${S.params.design?'':'disabled'}>Start camera${dk?' on this computer':''}</button>${S.params.design?'':'<p class="small muted">Save a photo version first so INK STUDY knows which design to show.</p>'}</div>`;},
-  bind(){
-    const lib=libOf(S.params.design);const box=app.querySelector('#arqr');
-    if(box)loadQRLib().then(()=>{box.innerHTML='';new QRCode(box,{text:location.origin+'/ink/ar'+(lib?'?lib='+lib:''),width:340,height:340,colorDark:'#20201E',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.M});const c=box.querySelector('canvas,img');if(c)c.style.cssText='width:170px;height:170px';})
-      .catch(()=>{box.innerHTML=`<p class="small">QR unavailable. On your phone, open <b>${esc(location.host)}/ink/ar</b></p>`;});
-    const sim=app.querySelector('[data-sim]');if(sim)sim.onclick=()=>go('arsim',{study:S.params.study,design:S.params.design});
-    app.querySelector('[data-start]').onclick=()=>{const c=document.createElement('canvas');const ok=!!(c.getContext('webgl')||c.getContext('experimental-webgl'));
-    if(!ok){app.querySelector('#arerr').textContent='This browser doesn’t support WebGL, which live AR needs. Use the photo study instead.';return;}
-    if(!navigator.mediaDevices){app.querySelector('#arerr').textContent='Camera isn’t available here (live AR needs HTTPS and camera permission).';return;}
-    location.href=`/ink/ar?study=${encodeURIComponent(S.params.study)}&design=${encodeURIComponent(S.params.design)}`;};}
-};
-/* Desktop simulation: a virtual marker card over the study photo (or webcam). Clearly labelled, never saved as AR. */
-VIEWS.arsim={dark:true,
-  html:()=>`<div class="topbar"><button class="iconbtn" data-back aria-label="Back">${I.back}</button><div class="title"><span class="tag" style="color:#f5c542">Simulated AR · desktop preview</span></div><span style="width:44px"></span></div>
-   <div class="stagearea" id="simarea"><canvas id="simc" role="img" aria-label="Simulated AR preview"></canvas>
-    <p id="simst" role="status" style="position:absolute;top:10px;right:12px;margin:0;font:600 13px system-ui;padding:4px 8px;border-radius:6px;background:#000a">Tracked (simulated)</p></div>
-   <div class="panel"><div class="row"><label style="min-width:52px">Card</label>
-     ${[['-1,0','←','left'],['0,-1','↑','up'],['0,1','↓','down'],['1,0','→','right']].map(([d,s,n])=>`<button class="nbtn" data-mv="${d}" aria-label="Move card ${n}">${s}</button>`).join('')}
-     <button class="nbtn" data-rot="-10" aria-label="Turn card left">⟲</button></div>
-    <div class="row"><label style="min-width:52px" for="tilt">Tilt</label><input type="range" id="tilt" min="0" max="60" value="25"><label for="dsz" style="min-width:36px">Size</label><input type="range" id="dsz" min="80" max="320" value="200"></div>
-    <div class="row"><button class="nbtn" data-rot="10" aria-label="Turn card right">⟳</button><button class="nbtn" data-cam style="padding:0 12px;font-size:13px">Use webcam as background</button><button class="nbtn" data-shake aria-pressed="true" style="padding:0 12px;font-size:13px">Hand shake</button></div>
-    <p class="small" style="color:#bdb8ae;margin:0">Drag the card. Pull it off the edge to see the “Lost” state. For real tracking, scan the QR on the previous screen with your phone.</p></div>`,
-  async bind(){
-    const c=app.querySelector('#simc'),area=app.querySelector('#simarea'),st=app.querySelector('#simst');
-    const W=720,H=960;c.width=W;c.height=H;const sz=()=>{const k=Math.min(area.clientWidth/W,area.clientHeight/H);c.style.width=W*k+'px';c.style.height=H*k+'px';};sz();
-    const design=await assetImg(S.params.design);
-    let bg=null;const vs=S.params.study?await versionsOf(S.params.study):[];const bv=vs.slice().reverse().find(v=>v.body_asset_id);if(bv)bg=await assetImg(bv.body_asset_id);
-    const marker=await new Promise(r=>{const i=new Image();i.crossOrigin='anonymous';i.onload=()=>r(i);i.onerror=()=>{const m=document.createElement('canvas');m.width=m.height=256;const x=m.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,256,256);x.fillStyle='#000';x.fillRect(24,24,208,208);x.fillStyle='#fff';x.fillRect(68,68,120,120);x.fillStyle='#000';x.font='bold 40px sans-serif';x.textAlign='center';x.fillText('Hiro',128,142);r(m);};i.src=HIRO;});
-    const M={x:W*.5,y:H*.66,rot:-8,tilt:25,size:200,shake:true};let video=null,raf=0,t0=performance.now();
-    function quad(cx,cy,w,h,rot,tilt){const a=rot*Math.PI/180,co=Math.cos(a),si=Math.sin(a),k=Math.cos(tilt*Math.PI/180),p=Math.sin(tilt*Math.PI/180)*.35;
-      return [[-w/2,-h/2,1-p],[w/2,-h/2,1-p],[w/2,h/2,1+p],[-w/2,h/2,1+p]].map(([x,y,s])=>{x*=s;y*=k;return [cx+x*co-y*si,cy+x*si+y*co];});}
-    function frame(now){raf=requestAnimationFrame(frame);if(!document.contains(c)){cancelAnimationFrame(raf);if(video&&video.srcObject)video.srcObject.getTracks().forEach(t=>t.stop());return;}
-      const x=c.getContext('2d');x.fillStyle='#222';x.fillRect(0,0,W,H);
-      if(video&&video.readyState>=2){const k=Math.max(W/video.videoWidth,H/video.videoHeight);x.drawImage(video,(W-video.videoWidth*k)/2,(H-video.videoHeight*k)/2,video.videoWidth*k,video.videoHeight*k);}
-      else if(bg){const k=Math.max(W/bg.width,H/bg.height);x.drawImage(bg,(W-bg.width*k)/2,(H-bg.height*k)/2,bg.width*k,bg.height*k);}
-      else{x.fillStyle='#c9a184';x.beginPath();x.moveTo(0,H*.35);x.lineTo(W,H*.25);x.lineTo(W,H*.8);x.lineTo(0,H*.9);x.fill();}
-      const t=(now-t0)/1000,j=M.shake&&!matchMedia('(prefers-reduced-motion:reduce)').matches?1:0;
-      const cx=M.x+j*(Math.sin(t*1.7)*6+Math.sin(t*4.3)*2),cy=M.y+j*(Math.cos(t*1.3)*5),rot=M.rot+j*Math.sin(t*.9)*2;
-      const mq=quad(cx,cy,M.size*.62,M.size*.62,rot,M.tilt);
-      const tracked=mq.every(p=>p[0]>0&&p[0]<W&&p[1]>0&&p[1]<H);
-      if(marker)R.drawQuad(x,marker,mq,4);else{x.fillStyle='#fff';x.beginPath();mq.forEach((p,i)=>i?x.lineTo(p[0],p[1]):x.moveTo(p[0],p[1]));x.fill();}
-      if(tracked){const dq=quad(cx,cy-M.size*.95,M.size,M.size*design.height/design.width,rot,M.tilt);x.save();x.globalAlpha=.88;x.globalCompositeOperation='multiply';R.drawQuad(x,design,dq,8);x.restore();}
-      const s=tracked?'Tracked (simulated)':'Lost — paused (simulated)';if(st.textContent!==s){st.textContent=s;st.style.color=tracked?'#9fe0a8':'#ffb4a8';}
-      x.font='600 22px ui-monospace,monospace';x.fillStyle='rgba(245,197,66,.95)';x.fillText('SIMULATED AR — DESKTOP PREVIEW',20,H-24);}
-    raf=requestAnimationFrame(frame);
-    let drag=null;area.addEventListener('pointerdown',e=>{area.setPointerCapture(e.pointerId);drag={x:e.clientX,y:e.clientY,mx:M.x,my:M.y};});
-    area.addEventListener('pointermove',e=>{if(!drag)return;const k=W/c.getBoundingClientRect().width;M.x=drag.mx+(e.clientX-drag.x)*k;M.y=drag.my+(e.clientY-drag.y)*k;});
-    area.addEventListener('pointerup',()=>drag=null);
-    app.querySelectorAll('[data-mv]').forEach(b=>b.onclick=()=>{const [dx,dy]=b.dataset.mv.split(',').map(Number);M.x+=dx*30;M.y+=dy*30;});
-    app.querySelectorAll('[data-rot]').forEach(b=>b.onclick=()=>M.rot+= +b.dataset.rot);
-    app.querySelector('#tilt').oninput=e=>M.tilt=+e.target.value;app.querySelector('#dsz').oninput=e=>M.size=+e.target.value;
-    const sh=app.querySelector('[data-shake]');sh.onclick=()=>{M.shake=!M.shake;sh.setAttribute('aria-pressed',String(M.shake));};
-    app.querySelector('[data-cam]').onclick=async e=>{try{const s=await navigator.mediaDevices.getUserMedia({video:true});video=document.createElement('video');video.muted=true;video.playsInline=true;video.srcObject=s;await video.play();camStream=s;e.target.textContent='Webcam on';}
-      catch(err){toast('Webcam unavailable ('+err.name+'). Using your study photo.');}};
-  }
-};
-
-/* ---------- privacy ---------- */
-VIEWS.privacy={
-  html:async()=>{const as=await St.all('assets'),vs=await St.all('versions'),ss=await St.all('studies');
-   const bodies=as.filter(a=>a.type==='body').length,caps=as.filter(a=>a.type==='capture').length,des=as.filter(a=>a.type==='design'&&!a.rights_source.startsWith('library')).length;
-   return `${topbar('Data & permissions')}<div class="scroll stack"><h2>What’s stored</h2>
-    <div class="qcard"><p><b>On this device</b> (browser storage): ${bodies} body photo(s), ${caps} AR capture(s), ${des} uploaded design(s), ${vs.length} version(s) across ${ss.length} stud${ss.length===1?'y':'ies'}.</p>
-    <p><b>On INK STUDY’s server:</b> nothing. This beta has no cloud storage or share links.</p>
-    <p><b>Sent to the AI</b> (only when you tap “Draft”): design name, body area label, rough size text, your notes and chosen illustration settings. Never your photos.</p>
-    <p><b>Exports:</b> PDFs you download or share are yours; deleting here can’t reach copies already sent.</p></div>
-    <div class="qcard"><p><b>Camera</b> is requested only when you tap Take photo or Start camera, and stops when you leave that screen. To change it, use your browser’s site settings.</p></div>
-    <button class="btn danger block" data-wipe>Delete everything on this device</button></div>`;},
-  bind(){app.querySelector('[data-wipe]').onclick=async()=>{if(!await confirmDlg('Delete everything?','All studies, versions, body photos, captures and uploaded designs are erased from this device.','Delete everything',true))return;
-    for(const s of ['assets','studies','versions'])await St.clear(s);imgCache.clear();toast('Everything was deleted from this device.');S.hist=[];go('studio',{},{replace:true});};}
-};
-
-/* ---------- boot ---------- */
-(async()=>{
-  const q=new URLSearchParams(location.search);
-  const w=await St.get('meta','welcomed').catch(()=>null);
-  if(q.get('study')){S.hist=[['studio',{}]];go('study',{id:q.get('study'),v:q.get('v')},{replace:true});history.replaceState(null,'','/ink/');}
-  else go(w?'studio':'welcome',{},{replace:true});
-  fetch('/api/health').then(r=>r.json()).then(h=>{const el=document.getElementById('svc');if(el)el.innerHTML=`<span class="status-chip ${h.ai?'ok':'off'}">AI 咨询问题${h.ai?' · 已连接':' · 未配置（可手写）'}</span>`;}).catch(()=>{});
+  const tx = async (mode, fn) => { const db = await open(); if (!db) return fn(null); return new Promise((res) => { const t = db.transaction('kv', mode); const st = t.objectStore('kv'); const r = fn(st); t.oncomplete = () => res(r && 'result' in r ? r.result : undefined); t.onerror = () => res(undefined); }); };
+  return {
+    get: k => mem.has(k) ? Promise.resolve(mem.get(k)) : tx('readonly', st => st ? st.get(k) : null),
+    set: (k, v) => { mem.set(k, v); return tx('readwrite', st => st && st.put(v, k)); },
+    del: k => { mem.delete(k); return tx('readwrite', st => st && st.delete(k)); },
+    clear: () => { mem.clear(); return tx('readwrite', st => st && st.clear()); }
+  };
 })();
+
+/* ================= helpers ================= */
+const $ = (sel, el) => (el || app).querySelector(sel);
+const $$ = (sel, el) => Array.from((el || app).querySelectorAll(sel));
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function len(cm, dec) { if (S.settings.units === 'in') return (cm / 2.54).toFixed(dec == null ? 1 : dec) + ' in'; return cm.toFixed(dec == null ? (cm < 10 ? 1 : 0) : dec) + ' cm'; }
+function lenPair(w, h) { const u = S.settings.units === 'in'; const f = v => u ? (v / 2.54).toFixed(1) : v.toFixed(v < 10 ? 1 : 0); return `${f(w)} × ${f(h)} ${u ? 'in' : 'cm'}`; }
+let toastT; function toast(msg) { let t = $('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); app.appendChild(t); } t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2200); }
+function rangeFill(inp) { const p = (inp.value - inp.min) / (inp.max - inp.min) * 100; inp.style.setProperty('--p', p + '%'); }
+
+const I = {
+  home: '<path d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/>',
+  grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+  cam: '<path d="M4 8.5A1.5 1.5 0 0 1 5.5 7H8l1.5-2h5L16 7h2.5A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="13" r="3.6"/>',
+  layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+  stack: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 7h6M9 11h6M9 15h3"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
+  back: '<path d="M15 5l-7 7 7 7"/>', close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/>',
+  arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  split: '<path d="M12 3v18"/><path d="M8 8l-4 4 4 4M16 8l4 4-4 4"/>',
+  video: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>',
+  l: '<path d="M15 5l-7 7 7 7"/>', r: '<path d="M9 5l7 7-7 7"/>', u: '<path d="M5 15l7-7 7 7"/>', d: '<path d="M5 9l7 7 7-7"/>',
+  rl: '<path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4v4h4"/>', rr: '<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v4h-4"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', minus: '<path d="M5 12h14"/>',
+  resize: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',
+  design: '<path d="M12 3c4 3 6 6 6 9a6 6 0 0 1-12 0c0-3 2-6 6-9z"/>',
+  adjust: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/>',
+  hand: '<circle cx="12" cy="8" r="3.4"/><path d="M5 20c1-4 4-6 7-6s6 2 7 6"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  doc: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
+  check: '<path d="M5 12l5 5L20 7"/>', spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>',
+  forearm: '<path d="M5 20c2-6 4-11 9-16M10 21c1-5 3-10 9-15"/>', upper: '<path d="M7 21c-1-6 0-12 3-17M15 21c0-6 1-12 3-17"/><path d="M10 4c2-1 5-1 8 0"/>', calf: '<path d="M8 3c-1 5 0 9 1 12 0 3-1 5-1 6M15 3c2 5 2 9 0 12-1 2-1 4 0 6"/>'
+};
+const ico = (n, cls) => `<svg viewBox="0 0 24 24" aria-hidden="true" ${cls ? `class="${cls}"` : ''}>${I[n]}</svg>`;
+
+/* ================= skin + model constants ================= */
+const SKINS = [
+  { id: 'I', rgb: [0.93, 0.78, 0.69], hex: '#efd4c4', frk: .55 },
+  { id: 'II', rgb: [0.88, 0.69, 0.57], hex: '#e2b89c', frk: .3 },
+  { id: 'III', rgb: [0.79, 0.57, 0.43], hex: '#c8956f', frk: .12 },
+  { id: 'IV', rgb: [0.64, 0.43, 0.30], hex: '#a3714f', frk: 0 },
+  { id: 'V', rgb: [0.45, 0.29, 0.19], hex: '#734b31', frk: 0 },
+  { id: 'VI', rgb: [0.27, 0.17, 0.115], hex: '#45302a', frk: 0 }
+];
+const STOPS = [
+  { days: 0, label: 'Fresh', sub: 'Day 0', big: 'Fresh', note: '<b>Day 0 — an open wound.</b> Redness and slight swelling ring the lines; plasma and excess ink leave a glossy sheen. Lines look their sharpest and darkest right now.' },
+  { days: 9, label: 'Healing', sub: 'Wk 1–2', big: 'Healing', note: '<b>Days 4–14 — peeling.</b> The surface flakes like a mild sunburn and the tattoo looks cloudy and dull while new skin forms over it. Don’t pick or scratch; follow your artist’s aftercare.' },
+  { days: 30, label: 'Healed', sub: '1 mo', big: 'Healed', note: '<b>About a month — the real baseline.</b> Ink now sits under a fresh layer of skin, so it reads slightly softer and lighter than day 0.' },
+  { days: 30 + 365, label: '1 yr', sub: 'Year 1', big: 'Year <em>1</em>', note: '<b>Settled.</b> Bold lines hold well; very fine lines may already soften a touch. Daily sunscreen from here on matters most.' },
+  { days: 30 + 5 * 365, label: '5 yrs', sub: 'Year 5', big: 'Year <em>5</em>', note: '<b>Slow ink migration.</b> Lines widen slightly. Light inks — yellow, white, pastels — start to lose punch first.' },
+  { days: 30 + 10 * 365, label: '10 yrs', sub: 'Year 10', big: 'Year <em>10</em>', note: '<b>Softening.</b> Fine lines blur and tight gaps start to close; colours lose saturation while black holds strongest. Many people consider a touch-up around 10–15 years.' },
+  { days: 30 + 20 * 365, label: '20 yrs', sub: 'Year 20', big: 'Year <em>20</em>', note: '<b>Two decades.</b> Spread is greatest where lines were thinnest, black can take on a faint blue-green cast, and sun-exposed spots fade most. A touch-up can restore contrast.' }
+];
+function daysAt(pos) { const i = Math.floor(clamp(pos, 0, 5.9999)), t = clamp(pos, 0, 6) - i; return STOPS[i].days + (STOPS[Math.min(6, i + 1)].days - STOPS[i].days) * t; }
+const SUN = { low: .7, med: 1, high: 1.6 }, CARE = { great: .85, ok: 1, poor: 1.25 };
+const RATE = { black: .010, grey: .018, red: .030, orange: .038, yellow: .065, green: .026, blue: .023, purple: .042, white: .11 };
+const SWATCH = { black: '#141110', grey: '#77716b', red: '#c8261c', orange: '#e2601e', yellow: '#f2b928', green: '#2e7b3a', blue: '#25568f', purple: '#c25878', white: '#fbf7ee' };
+
+function ageModel(days, mods, line, palette) {
+  const fresh = Math.exp(-days / 1.6), healing = sstep(2.5, 6, days) * (1 - sstep(13, 26, days)), settled = sstep(14, 30, days);
+  const yEff = Math.max(days - 30, 0) / 365 * mods.sun * mods.place * mods.care;
+  const lw = line === 'fine' ? 1.7 : 1;
+  const sigma = .045 + (.034 * Math.pow(yEff, .62) + .018 * settled) * lw;
+  const spread = 2.355 * (sigma - .045); // FWHM growth in mm
+  const dens = k => (1 - .1 * settled) * Math.exp(-RATE[k] * yEff) * (1 - .12 * healing) * (line === 'fine' ? Math.exp(-.006 * yEff * .7) : 1);
+  let colorW = 0, colorR = 0;
+  if (palette) for (const k in palette) { if (k === 'black' || k === 'grey' || !palette[k]) continue; colorW += palette[k]; colorR += palette[k] * dens(k); }
+  return { fresh, healing, settled, yEff, sigma, spread, black: dens('black'), color: colorW > .03 ? colorR / colorW : null, touch: yEff > 10 || (colorW > .03 && colorR / colorW < .62) };
+}
+function sstep(a, b, x) { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); }
+
+function analyze(cv) {
+  const s = 96, c = document.createElement('canvas'); c.width = s; c.height = Math.max(1, Math.round(s * cv.height / cv.width));
+  const x = c.getContext('2d'); x.drawImage(cv, 0, 0, c.width, c.height);
+  const px = x.getImageData(0, 0, c.width, c.height).data; const out = { black: 0, grey: 0, red: 0, orange: 0, yellow: 0, green: 0, blue: 0, purple: 0, white: 0 }; let n = 0;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i + 3] < 120) continue; n++;
+    const r = px[i] / 255, g = px[i + 1] / 255, b = px[i + 2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b), sat = mx ? (mx - mn) / mx : 0;
+    if (mx < .3) { out.black++; continue; }
+    if (sat < .2) { out[mn > .8 ? 'white' : 'grey']++; continue; }
+    let h; const dd = mx - mn; if (mx === r) h = ((g - b) / dd + 6) % 6; else if (mx === g) h = (b - r) / dd + 2; else h = (r - g) / dd + 4; h *= 60;
+    out[h < 18 || h >= 330 ? 'red' : h < 38 ? 'orange' : h < 72 ? 'yellow' : h < 170 ? 'green' : h < 260 ? 'blue' : 'purple']++;
+  }
+  for (const k in out) out[k] = n ? out[k] / n : 0;
+  return out;
+}
+
+/* ================= designs: lookup, raster, textures ================= */
+function getDesign(id) {
+  const lib = D.LIB.find(d => d.id === id); if (lib) return Object.assign({ kind: 'lib' }, lib);
+  const my = S.my.find(d => d.id === id); if (my) return my;
+  return null;
+}
+const rasterCache = new Map();
+async function rasterOf(d, mode, px) {
+  const key = d.id + '|' + (mode || '') + '|' + (px || 1024);
+  if (rasterCache.has(key)) return rasterCache.get(key);
+  const p = (async () => {
+    if (d.kind === 'built') return D.rasterBuilt(d.spec, px || 1024);
+    if (d.kind === 'upload') { const src = await IDB.get('up:' + d.id); const img = await loadImg(src); const cv = document.createElement('canvas'); const sc = (px || 1024) / Math.max(img.width, img.height); cv.width = Math.round(img.width * sc); cv.height = Math.round(img.height * sc); cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); return cv; }
+    return D.raster(d, px || 1024, mode);
+  })();
+  rasterCache.set(key, p); p.catch(() => rasterCache.delete(key));
+  return p;
+}
+function loadImg(src) { return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Image failed')); i.src = src; }); }
+const thumbCache = new Map();
+async function thumbURL(d, mode) {
+  const key = d.id + '|' + (mode || '');
+  if (thumbCache.has(key)) return thumbCache.get(key);
+  let url;
+  if (d.kind === 'lib' && d.build && !d.text) url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(d.build(mode));
+  else if (d.thumb) url = d.thumb;
+  else { const cv = await rasterOf(d, mode, 420); url = cv.toDataURL('image/png'); }
+  thumbCache.set(key, url); return url;
+}
+function hydrateThumbs(root) {
+  $$('img[data-thumb]', root).forEach(async img => { const d = getDesign(img.dataset.thumb); if (!d) return; try { img.src = await thumbURL(d, img.dataset.mode || undefined); } catch (e) {} });
+}
+// pad + resample into a power-of-two texture so every GPU can mipmap it
+async function textureFor(d, mode) {
+  const cv = await rasterOf(d, mode, 1024);
+  const cw = cv.width, ch = cv.height, pad = .08 * Math.max(cw, ch);
+  const T = document.createElement('canvas'); T.width = T.height = 1024;
+  const x = T.getContext('2d');
+  const W = cw + 2 * pad, H = ch + 2 * pad;
+  x.drawImage(cv, pad / W * 1024, pad / H * 1024, cw / W * 1024, ch / H * 1024);
+  return { tex: T, aspectC: cw / ch, aspectP: W / H, padH: H / ch, canvas: cv };
+}
+function lineOf(d, mode) { if (d.kind === 'built') return d.spec.mode === 'fine' ? 'fine' : 'bold'; if (mode === 'fine') return 'fine'; return d.line || 'bold'; }
+
+/* ================= shared offscreen renderer for stills ================= */
+let snapEng = null, snapTexKey = '';
+function snapEngine() {
+  if (snapEng !== null) return snapEng;
+  try { snapEng = InkAR.create(document.createElement('canvas'), { fixed: [200, 200, 2] }); } catch (e) { snapEng = false; }
+  return snapEng;
+}
+async function snapshot(o) {
+  const E = snapEngine(); if (!E) return null;
+  const d = getDesign(o.design) || getDesign('rose');
+  const key = d.id + '|' + (o.mode || '');
+  let t = snapTex.get(key); if (!t) { t = await textureFor(d, o.mode); snapTex.set(key, t); }
+  if (snapTexKey !== key) { E.setTattoo(t.tex, t.aspectP); snapTexKey = key; }
+  E.setFixed([o.w, o.h, o.dpr || 2]);
+  if (E.state.body !== (o.body || 'forearm')) E.setBody(o.body || 'forearm');
+  const B = E.body, sk = SKINS[o.skin != null ? o.skin : S.settings.skin];
+  const L = o.sizeCm || d.size || 9, hC = t.aspectC >= 1 ? L / t.aspectC : L;
+  const zc = o.z != null ? o.z : (B.defaultZ || 0);
+  E.set({ sway: 0, scan: 0, lock: 0, edit: 0, reveal: 1, split: o.split != null ? o.split : -1, daysL: o.daysL != null ? o.daysL : (o.days || 0), daysR: o.days || 0,
+    roll: (o.roll != null ? o.roll : -B.phiFace), pitch: o.pitch || 0, yaw: 0, zoom: o.zoom || 1, shiftX: o.shiftX || 0, shiftY: o.shiftY || 0,
+    mods: [SUN[o.sun || 'med'], o.place || 1, CARE[o.care || 'ok'], lineOf(d, o.mode) === 'fine' ? 1.7 : 1],
+    hair: o.hair == null ? (S.settings.hair ? .32 : 0) : o.hair, freckle: sk.frk, skin: sk.rgb });
+  E.state.place = { f: o.f != null ? o.f : E.fracFromPhi(zc, B.phiFace), z: zc, size: hC * t.padH, rot: o.rot || 0 };
+  E.state.t0 = performance.now() - 1000;
+  return E.capture(o.type || 'image/jpeg');
+}
+const snapTex = new Map();
+// queue stills so they don't fight each other
+let snapQ = Promise.resolve();
+function snap(o) { const p = snapQ.then(() => snapshot(o)).catch(() => null); snapQ = p; return p; }
+
+/* ================= router ================= */
+let cleanup = null, curView = '';
+const TABS = [['studio', 'Studio', 'home', '#/'], ['flash', 'Flash', 'grid', '#/flash'], ['ar', 'Try on', 'cam', '#/ar'], ['builder', 'Builder', 'layers', '#/builder'], ['sessions', 'Sessions', 'stack', '#/sessions']];
+function tabbar(active) {
+  return `<nav class="tabbar" aria-label="Main">${TABS.map(([id, label, ic, href]) => id === 'ar'
+    ? `<a class="tab-cta" href="${href}/${esc(S.last)}" aria-label="Try on in AR"><span class="ring">${ico(ic)}</span><b>${label}</b></a>`
+    : `<a href="${href}" ${active === id ? 'aria-current="page"' : ''}>${ico(ic)}<span>${label}</span></a>`).join('')}</nav>`;
+}
+function route() {
+  const h = location.hash.replace(/^#\/?/, '');
+  const [name, a, b] = h.split('/');
+  if (cleanup) { try { cleanup(); } catch (e) {} cleanup = null; }
+  const views = { '': viewStudio, flash: viewFlash, design: viewDesign, builder: viewBuilder, ar: viewAR, sessions: viewSessions, compare: viewCompare, consult: viewConsult, settings: viewSettings };
+  const fn = views[name] || viewStudio;
+  curView = name;
+  app.innerHTML = '';
+  fn(decodeURIComponent(a || ''), decodeURIComponent(b || ''));
+  const v = $('.view'); if (v && !reduceMotion) v.classList.add('enter');
+}
+window.addEventListener('hashchange', route);
+
+function shell(active, inner) {
+  app.innerHTML = `<div class="view" id="view">${inner}</div>${tabbar(active)}`;
+  hydrateThumbs(app);
+  return $('#view');
+}
+function flashCard(d, i, cls) {
+  return `<a class="flash ${cls || ''}" href="#/design/${esc(d.id)}"><span class="no">No. ${String(i + 1).padStart(2, '0')}</span><img class="art" data-thumb="${esc(d.id)}" alt="${esc(d.name)} — ${esc(styleLabel(d.style))} flash"><span class="meta"><b>${esc(d.name)}</b><span>${esc(styleLabel(d.style))} · ${esc(len(d.size || 9, 0))}</span></span></a>`;
+}
+function styleLabel(s) { const x = D.STYLES.find(t => t.id === s); return x ? x.label : s === 'custom' ? 'My design' : s === 'upload' ? 'Upload' : s; }
+
+/* ================= Studio (home) ================= */
+function viewStudio() {
+  const feat = ['rose', 'swallow', 'mandala', 'koi', 'butterfly', 'dagger'].map(id => D.LIB.find(d => d.id === id));
+  const caps = S.caps.slice(-6).reverse();
+  const v = shell('studio', `
+  <header class="topbar"><span class="wordmark" aria-label="Ink Study">Ink<i>study</i></span><a class="icon-btn" href="#/settings" aria-label="Settings">${ico('gear')}</a></header>
+  <section class="hero" aria-label="Simulated AR preview">
+    <img class="hero-shot" alt="Simulated camera view of a traditional rose tattoo on a forearm">
+    <div class="hero-hud"><span class="rec">AR · Simulated</span><span>Inner forearm · Year 10</span></div>
+    <div class="brackets" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div class="hero-copy">
+      <span class="eyebrow">Try on · Compare · Age · Consult</span>
+      <h1 class="display">Wear it <em>before</em><br>it’s forever.</h1>
+      <div class="row"><a class="btn btn-primary" href="#/ar/${esc(S.last)}">${ico('cam')}Open AR camera</a><a class="btn btn-ghost" href="#/flash">Browse flash</a></div>
+    </div>
+  </section>
+  <section class="section"><div class="section-head"><h2 class="h2">Featured flash</h2><a class="link" href="#/flash">All 20</a></div>
+    <div class="hscroll">${feat.map((d, i) => flashCard(d, D.LIB.indexOf(d), 'feat')).join('')}</div></section>
+  <section class="section"><div class="promo">
+    <img class="promo-art" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(D.buildSVG({ motif: 'swallow', frame: 'ring', accents: ['sparkles'], mode: 'fine' }))}" alt="">
+    <span class="eyebrow">Tattoo Builder</span><h2 class="display">Compose your own piece.</h2>
+    <p>Pick a motif, a frame, accents and lettering. Switch between full colour, black &amp; grey or fine line.</p>
+    <a class="btn btn-bone btn-sm" href="#/builder">Start building ${ico('arrow')}</a></div></section>
+  <section class="section"><div class="section-head"><h2 class="h2">How ink ages</h2><a class="link" href="#/ar/${esc(S.last)}/age">See it</a></div>
+    <div class="facts">
+      <div class="fact"><b>Black</b><span>is the most stable pigment and holds contrast longest.</span></div>
+      <div class="fact"><b>Sun</b><span>is the biggest accelerant of fading. SPF on healed ink helps.</span></div>
+      <div class="fact"><b>Fine lines</b><span>blur proportionally more than bold lines as ink migrates.</span></div>
+      <div class="fact"><b>10–15 yrs</b><span>is when many people consider a touch-up.</span></div>
+    </div></section>
+  <section class="section"><div class="section-head"><h2 class="h2">My sessions</h2>${caps.length ? '<a class="link" href="#/sessions">View all</a>' : ''}</div>
+    ${caps.length ? `<div class="sessions">${caps.slice(0, 3).map(capTile).join('')}</div>` : `<div class="empty"><div class="h3">No captures yet</div>Open the AR camera, place a design and press the shutter. Captures land here for comparing and for your artist.</div>`}</section>
+  <p class="foot-note">Illustrative simulation — your artist and dermatologist know your skin.</p>`);
+  (async () => {
+    const url = await heroShot();
+    const img = $('.hero-shot', v); if (img && url) { img.src = url; img.onload = () => img.classList.add('ready'); }
+  })();
+}
+let heroURL = null;
+async function heroShot() {
+  if (heroURL) return heroURL;
+  heroURL = await snap({ design: 'rose', w: 365, h: 440, dpr: 2, days: STOPS[5].days, zoom: 1.45, shiftY: -0.18, shiftX: 0.05, sizeCm: 10, z: 1.5, roll: -0.15, type: 'image/jpeg' });
+  return heroURL;
+}
+function capTile(c) { return `<a class="sess" href="#/sessions"><img src="${c.thumb}" alt="Capture: ${esc(c.designName)}, ${esc(c.stage)}"><span class="lbl">${esc(c.designName)}<br>${esc(c.stage)}</span></a>`; }
+
+/* ================= Flash gallery ================= */
+const LEDES = { all: 'Twenty original pieces drawn for trying on. Tap any sheet for details and aging.', traditional: 'Bold outlines, a tight palette of red, green and yellow, and solid black shading — built to read from across a room for decades.', fineline: 'Single-needle work. Delicate and airy, but lines this thin are the first to soften as ink migrates.', blackwork: 'Solid black, geometry and dotwork. Black is the most stable pigment, so these hold contrast longest.', japanese: 'Irezumi-inspired waves, koi and blossoms with flowing movement. Best given room to breathe.', script: 'Lettering in script, blackletter and typewriter. Keep letters large enough that counters stay open over time.' };
+let flashFilter = 'all', flashQuery = '';
+function viewFlash() {
+  const v = shell('flash', `
+  <div class="page-head"><span class="eyebrow">The flash wall</span><h1 class="display">Flash <em>&</em> designs</h1></div>
+  <label class="search">${ico('search')}<span class="sr-only">Search designs</span><input type="search" placeholder="Search rose, moon, koi…" value="${esc(flashQuery)}" id="q"></label>
+  <div class="chips" role="group" aria-label="Filter by style" style="padding-left:20px;margin-left:0">${D.STYLES.map(s => `<button class="chip" data-f="${s.id}" aria-pressed="${flashFilter === s.id}">${s.label}</button>`).join('')}${S.my.length ? `<button class="chip" data-f="mine" aria-pressed="${flashFilter === 'mine'}">My designs</button>` : ''}</div>
+  <p class="style-lede" id="lede"></p>
+  <div class="gal"><div class="grid2" id="g"></div></div>
+  <section class="section"><label class="btn btn-ghost btn-block" tabindex="0">${ico('upload')} Upload your own PNG or SVG<input type="file" id="up" accept="image/png,image/svg+xml,image/jpeg,image/webp" class="sr-only"></label>
+  <p class="muted small" style="margin-top:8px;text-align:center">Images stay on this device. SVGs are sanitized and rasterized.</p></section>`);
+  const draw = () => {
+    const q = flashQuery.trim().toLowerCase();
+    let list = flashFilter === 'mine' ? S.my : D.LIB.filter(d => flashFilter === 'all' || d.style === flashFilter);
+    if (flashFilter === 'all') list = list.concat(S.my);
+    if (q) list = list.filter(d => (d.name + ' ' + (d.tags || []).join(' ') + ' ' + d.style).toLowerCase().includes(q));
+    $('#g', v).innerHTML = list.map((d, i) => flashCard(d, D.LIB.indexOf(d) >= 0 ? D.LIB.indexOf(d) : i)).join('') || `<div class="empty" style="grid-column:1/-1">Nothing matches “${esc(q)}”.</div>`;
+    $('#lede', v).textContent = LEDES[flashFilter] || 'Designs you built or uploaded.';
+    hydrateThumbs(v);
+  };
+  draw();
+  $$('.chip', v).forEach(b => b.onclick = () => { flashFilter = b.dataset.f; $$('.chip', v).forEach(x => x.setAttribute('aria-pressed', x === b)); draw(); });
+  $('#q', v).oninput = e => { flashQuery = e.target.value; draw(); };
+  $('#up', v).onchange = e => handleUpload(e.target.files[0]);
+}
+
+async function handleUpload(file) {
+  if (!file) return;
+  if (file.size > 8e6) return toast('That file is over 8 MB');
+  try {
+    let src;
+    if (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)) {
+      const txt = await file.text();
+      src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(sanitizeSVG(txt));
+    } else src = await new Promise((r, j) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = j; fr.readAsDataURL(file); });
+    const img = await loadImg(src);
+    const sc = 1024 / Math.max(img.naturalWidth || img.width || 1024, img.naturalHeight || img.height || 1024);
+    const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round((img.naturalWidth || 1024) * sc)); cv.height = Math.max(1, Math.round((img.naturalHeight || 1024) * sc));
+    const x = cv.getContext('2d'); x.drawImage(img, 0, 0, cv.width, cv.height);
+    // no transparency? treat it as a drawing on paper: luminance -> ink alpha
+    const id = x.getImageData(0, 0, cv.width, cv.height), p = id.data; let opaque = true;
+    for (let i = 3; i < p.length; i += 16) if (p[i] < 250) { opaque = false; break; }
+    if (opaque) for (let i = 0; i < p.length; i += 4) { const l = (p[i] * .3 + p[i + 1] * .59 + p[i + 2] * .11) / 255; const a = clamp((1 - l) * 1.25, 0, 1); p[i + 3] = a * 255; if (a > 0) { p[i] = clamp((p[i] - 255 * (1 - a)) / a, 0, 255); p[i + 1] = clamp((p[i + 1] - 255 * (1 - a)) / a, 0, 255); p[i + 2] = clamp((p[i + 2] - 255 * (1 - a)) / a, 0, 255); } }
+    x.putImageData(id, 0, 0);
+    const trimmed = trim(cv);
+    const did = 'up-' + uid();
+    await IDB.set('up:' + did, trimmed.toDataURL('image/png'));
+    const th = document.createElement('canvas'); const ts = 300 / Math.max(trimmed.width, trimmed.height); th.width = Math.round(trimmed.width * ts); th.height = Math.round(trimmed.height * ts); th.getContext('2d').drawImage(trimmed, 0, 0, th.width, th.height);
+    S.my.push({ id: did, kind: 'upload', name: file.name.replace(/\.[a-z]+$/i, '').slice(0, 28) || 'My upload', style: 'upload', line: 'bold', size: 8, thumb: th.toDataURL('image/png'), tags: ['Upload'] });
+    save(); toast('Added to My designs'); location.hash = '#/design/' + did;
+  } catch (e) { toast('Could not read that image'); }
+}
+function sanitizeSVG(txt) {
+  const doc = new DOMParser().parseFromString(txt, 'image/svg+xml');
+  const svg = doc.documentElement;
+  if (!svg || svg.nodeName.toLowerCase() !== 'svg' || doc.querySelector('parsererror')) throw new Error('Not an SVG');
+  doc.querySelectorAll('script,foreignObject,iframe,embed,object,audio,video,animate,set,animateTransform,animateMotion').forEach(n => n.remove());
+  doc.querySelectorAll('*').forEach(n => {
+    [...n.attributes].forEach(a => {
+      const nm = a.name.toLowerCase(), val = a.value.trim().toLowerCase();
+      if (nm.startsWith('on')) n.removeAttribute(a.name);
+      else if ((nm === 'href' || nm === 'xlink:href') && !(val.startsWith('#') || val.startsWith('data:image/'))) n.removeAttribute(a.name);
+      else if (/url\(\s*['"]?(?!#)/i.test(a.value) || /javascript:/i.test(a.value)) n.removeAttribute(a.name);
+    });
+    if (n.nodeName.toLowerCase() === 'style') n.textContent = n.textContent.replace(/@import[^;]+;?/gi, '').replace(/url\(\s*['"]?(?!#)[^)]*\)/gi, 'none');
+  });
+  if (!svg.getAttribute('width') && svg.getAttribute('viewBox')) { const vb = svg.getAttribute('viewBox').split(/[\s,]+/).map(Number); svg.setAttribute('width', vb[2] || 512); svg.setAttribute('height', vb[3] || 512); }
+  return new XMLSerializer().serializeToString(svg);
+}
+function trim(cv) {
+  const x = cv.getContext('2d'), { width: w, height: h } = cv, p = x.getImageData(0, 0, w, h).data;
+  let x0 = w, y0 = h, x1 = 0, y1 = 0;
+  for (let y = 0; y < h; y++) for (let xx = 0; xx < w; xx++) if (p[(y * w + xx) * 4 + 3] > 12) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 <= x0 || y1 <= y0) return cv;
+  const o = document.createElement('canvas'); o.width = x1 - x0 + 1; o.height = y1 - y0 + 1; o.getContext('2d').drawImage(cv, -x0, -y0); return o;
+}
+
+/* ================= Design detail ================= */
+function viewDesign(id) {
+  const d = getDesign(id); if (!d) { location.hash = '#/flash'; return; }
+  const i = D.LIB.indexOf(D.LIB.find(x => x.id === id));
+  const colorable = d.kind === 'lib' && d.build && d.style !== 'fineline' && d.style !== 'blackwork' && !d.text;
+  let mode = '';
+  const v = shell('flash', `
+  <div class="back-row"><a class="icon-btn" href="#/flash" aria-label="Back to flash">${ico('back')}</a><span class="eyebrow">${esc(styleLabel(d.style))}${i >= 0 ? ' · No. ' + String(i + 1).padStart(2, '0') : ''}</span></div>
+  <div class="detail-art" style="margin-top:12px"><span class="corner tl">Ink Study</span><span class="corner tr">${esc(d.artist || 'Original')}</span><span class="corner bl">Flash sheet</span><span class="corner br">${esc(len(d.size || 9, 0))}</span><img id="art" data-thumb="${esc(d.id)}" alt="${esc(d.name)}"></div>
+  <section class="section" style="margin-top:20px">
+    <h1 class="display" style="font-size:34px">${esc(d.name)}</h1>
+    <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">${(d.tags || []).map(t => `<span class="tag" style="color:var(--bone-2)">${esc(t)}</span>`).join('')}<span class="tag" style="color:var(--gold)">${lineOf(d) === 'fine' ? 'Fine line' : 'Bold line'}</span></div>
+    <div class="kv"><div><b>${esc(len(d.size || 9, 0))}</b><span>Suggested</span></div><div><b>${lineOf(d) === 'fine' ? 'Fine' : 'Bold'}</b><span>Linework</span></div><div><b id="pal-n">—</b><span>Ink colours</span></div></div>
+    ${colorable ? `<div class="seg" style="margin-top:14px" role="group" aria-label="Ink"><button data-m="" aria-pressed="true">Full colour</button><button data-m="bw" aria-pressed="false">Black &amp; grey</button><button data-m="fine" aria-pressed="false">Fine line</button></div>` : ''}
+  </section>
+  <section class="section"><div class="section-head"><h2 class="h2">How it ages</h2><span class="muted small">Inner forearm · Medium sun</span></div>
+    <div class="age-strip" id="strip">${[2, 4, 5, 6].map(k => `<figure><div class="ph"><img alt="${esc(d.name)} simulated at ${STOPS[k].sub}" hidden></div><figcaption>${STOPS[k].sub}</figcaption></figure>`).join('')}</div>
+    <div class="palette-bar" id="pbar" aria-hidden="true"></div><div class="palette-legend" id="pleg"></div>
+    <p class="stage-note" id="pnote"></p></section>
+  <div class="sticky-cta"><a class="btn btn-primary" style="flex:1" id="try" href="#/ar/${esc(d.id)}">${ico('cam')} Try on in AR</a>${d.kind === 'built' ? `<a class="btn btn-ghost" href="#/builder/${esc(d.id)}">Edit</a>` : ''}${d.kind !== 'lib' ? `<button class="btn btn-ghost" id="del" aria-label="Delete design">${ico('trash')}</button>` : ''}</div>`);
+  let token = 0;
+  async function refresh() {
+    const my = ++token;
+    const img = $('#art', v); thumbURL(d, mode || undefined).then(u => { if (my === token) img.src = u; });
+    const cv = await rasterOf(d, mode || undefined, 512); if (my !== token) return;
+    const pal = analyze(cv);
+    const keys = Object.keys(pal).filter(k => pal[k] > .015).sort((a, b) => pal[b] - pal[a]);
+    $('#pal-n', v).textContent = keys.length;
+    $('#pbar', v).innerHTML = keys.map(k => `<i style="flex:${pal[k]};background:${SWATCH[k]}"></i>`).join('');
+    const m10 = ageModel(STOPS[5].days, { sun: 1, place: 1, care: 1 }, lineOf(d, mode), pal);
+    $('#pleg', v).innerHTML = keys.map(k => `<span><i style="background:${SWATCH[k]}"></i>${k[0].toUpperCase() + k.slice(1)} · ${Math.round(100 * Math.exp(-RATE[k] * m10.yEff) * .9)}% at 10 yrs</span>`).join('');
+    $('#pnote', v).innerHTML = `Simulated with medium sun and average aftercare. ${keys.includes('yellow') || keys.includes('white') ? 'Light inks here (yellow / white) will fade first; ' : ''}${lineOf(d, mode) === 'fine' ? 'fine lines will soften visibly by year 10.' : 'bold black outlines keep the design readable for decades.'} <a class="link" href="#/ar/${esc(d.id)}${mode ? '/' + mode : ''}/age">Scrub the full timeline →</a>`;
+    $('#try', v).href = `#/ar/${d.id}${mode ? '/' + mode : ''}`;
+    const figs = $$('#strip figure', v);
+    for (let j = 0; j < 4; j++) {
+      const k = [2, 4, 5, 6][j];
+      const ph = figs[j].querySelector('.ph'), im = figs[j].querySelector('img'); ph.classList.remove('ready'); im.hidden = true;
+      const url = await snap({ design: d.id, mode: mode || undefined, w: 84, h: 112, dpr: 2, days: STOPS[k].days, zoom: 2.4, sizeCm: Math.min(d.size || 9, 9), shiftY: 0, z: 0.5, hair: 0, roll: 0 });
+      if (my !== token) return;
+      if (url) { im.src = url; im.hidden = false; ph.classList.add('ready'); }
+    }
+  }
+  refresh();
+  $$('.seg button', v).forEach(b => b.onclick = () => { mode = b.dataset.m; $$('.seg button', v).forEach(x => x.setAttribute('aria-pressed', x === b)); refresh(); });
+  const del = $('#del', v); if (del) del.onclick = () => confirmModal('Delete this design?', 'It will be removed from My designs on this device.', 'Delete', async () => { S.my = S.my.filter(x => x.id !== d.id); if (d.kind === 'upload') IDB.del('up:' + d.id); if (S.last === d.id) S.last = 'rose'; save(); location.hash = '#/flash'; });
+}
+
+/* ================= Builder ================= */
+let bspec = null;
+function viewBuilder(editId) {
+  const editing = editId ? S.my.find(x => x.id === editId && x.kind === 'built') : null;
+  if (editing) bspec = JSON.parse(JSON.stringify(editing.spec));
+  if (!bspec) bspec = { motif: 'rose', frame: 'banner', accents: ['stars'], mode: 'color', text: { str: 'Mom', font: 'script', pos: 'below', curve: .2 }, bannerText: 'MOM' };
+  const v = shell('builder', `
+  <div class="builder-stage"><div class="page-head" style="padding:4px 4px 10px;display:flex;justify-content:space-between;align-items:flex-end"><div><span class="eyebrow">Tattoo Builder</span><h1 class="display" style="font-size:30px;margin-top:6px">${editing ? 'Edit <em>design</em>' : 'Compose <em>yours</em>'}</h1></div><button class="btn btn-ghost btn-sm" id="rand">${ico('spark')} Surprise me</button></div>
+    <div class="builder-paper"><span class="corner tl">Live preview</span><span class="corner tr" id="bmode"></span><canvas id="pv" aria-label="Live preview of your design" role="img"></canvas></div></div>
+  <div class="bsec"><div class="lab"><b>Ink</b><span>Colour mode</span></div><div class="seg" role="group" aria-label="Colour mode" id="mode">${[['color', 'Full colour'], ['bw', 'Black & grey'], ['fine', 'Fine line']].map(([k, l]) => `<button data-v="${k}" aria-pressed="${bspec.mode === k}">${l}</button>`).join('')}</div></div>
+  <div class="bsec"><div class="lab"><b>Central motif</b><span>${D.MOTIFS.length} options</span></div><div class="tiles" id="motifs" role="group" aria-label="Motif"></div></div>
+  <div class="bsec"><div class="lab"><b>Frame</b><span>Behind or around</span></div><div class="tiles" id="frames" role="group" aria-label="Frame"></div></div>
+  <div class="bsec"><div class="lab"><b>Accents</b><span>Pick any</span></div><div class="tiles" id="accents" role="group" aria-label="Accents"></div></div>
+  <div class="bsec"><div class="lab"><b>Lettering</b><span>Optional</span></div>
+    <label class="field"><span class="sr-only">Lettering text</span><input id="txt" maxlength="22" placeholder="A name, a date, a word…" value="${esc(bspec.text.str)}"></label>
+    <div class="seg" style="margin-top:10px" role="group" aria-label="Font" id="font">${Object.entries(D.FONTS).map(([k, f]) => `<button data-v="${k}" aria-pressed="${bspec.text.font === k}" style="font-family:${f.css.replace(/"/g, "'")};font-size:${k === 'script' ? 17 : k === 'blackletter' ? 16 : 12}px;font-weight:${f.weight}">${k === 'serif' ? 'SERIF' : k === 'typewriter' ? 'Type' : f.label}</button>`).join('')}</div>
+    <div class="seg" style="margin-top:10px" role="group" aria-label="Lettering position" id="pos">${[['below', 'Below'], ['above', 'Above'], ['over', 'Across'], ['none', 'Off']].map(([k, l]) => `<button data-v="${k}" aria-pressed="${bspec.text.pos === k}">${l}</button>`).join('')}</div>
+    <div class="range" style="margin-top:8px"><span class="muted small" style="width:76px">Arc curve</span><input type="range" id="curve" min="-1" max="1" step="0.05" value="${bspec.text.curve}" aria-label="Lettering arc curve"><output id="curveo"></output></div>
+  </div>
+  <div class="builder-actions"><button class="btn btn-ghost" id="savebtn" style="flex:1">${editing ? 'Save changes' : 'Save to My designs'}</button><button class="btn btn-primary" id="tryb" style="flex:1">${ico('cam')} Try on</button></div>
+  <p class="muted small" style="margin:12px 20px 0;text-align:center">Banner frame uses your lettering inside the ribbon.</p>`);
+  const tile = (id, label, src, on) => `<button class="tile" data-v="${id}" aria-pressed="${on}"><span class="tbox">${src ? `<img src="${src}" alt="">` : `<span>∅</span>`}</span>${esc(label)}</button>`;
+  const svgURL = s => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s);
+  function tiles() {
+    $('#motifs', v).innerHTML = D.MOTIFS.map(m => tile(m.id, m.label, svgURL(D.buildSVG({ motif: m.id, frame: 'none', mode: bspec.mode })), bspec.motif === m.id)).join('');
+    $('#frames', v).innerHTML = D.FRAMES.map(f => tile(f.id, f.label, f.id === 'none' ? null : svgURL(D.buildSVG({ motif: '__', frame: f.id, mode: bspec.mode, bannerText: 'TEXT' }).replace(/<g transform="translate\(300 300\) scale\([\d.]+\) translate\(-300 -300\)">[\s\S]*?<\/g>(?=<)/, '')), bspec.frame === f.id)).join('');
+    $('#accents', v).innerHTML = D.ACCENTS.map(a => `<button class="tile" data-v="${a.id}" aria-pressed="${bspec.accents.includes(a.id)}"><span class="tbox"><img src="${svgURL(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 600'>${'' }</svg>`)}" data-acc="${a.id}" alt=""></span>${a.label}</button>`).join('');
+    $$('#accents img', v).forEach(img => { img.src = svgURL(D.buildSVG({ motif: '__none', frame: 'none', accents: [img.dataset.acc], mode: bspec.mode }).replace(/<g transform="translate\(300 300\)[^>]*>[\s\S]*?<\/g>/, '')); });
+    $('#frames .tile[data-v=none] .tbox', v).classList.add('dark');
+    bind();
+  }
+  let tok = 0;
+  async function preview() {
+    const my = ++tok; save();
+    bspec.bannerText = (bspec.text.str || '').toUpperCase();
+    const cv = await D.rasterBuilt(bspec, 720); if (my !== tok) return;
+    const pv = $('#pv', v); if (!pv) return;
+    pv.width = cv.width; pv.height = cv.height; pv.getContext('2d').drawImage(cv, 0, 0);
+    pv.style.width = (cv.width >= cv.height ? 230 : 230 * cv.width / cv.height) + 'px';
+    $('#bmode', v).textContent = { color: 'Full colour', bw: 'Black & grey', fine: 'Fine line' }[bspec.mode];
+    $('#curveo', v).textContent = (bspec.text.curve > 0 ? '+' : '') + Math.round(bspec.text.curve * 100);
+    rangeFill($('#curve', v));
+  }
+  function bind() {
+    $$('#motifs .tile', v).forEach(b => b.onclick = () => { bspec.motif = b.dataset.v; $$('#motifs .tile', v).forEach(x => x.setAttribute('aria-pressed', x === b)); preview(); });
+    $$('#frames .tile', v).forEach(b => b.onclick = () => { bspec.frame = b.dataset.v; $$('#frames .tile', v).forEach(x => x.setAttribute('aria-pressed', x === b)); preview(); });
+    $$('#accents .tile', v).forEach(b => b.onclick = () => { const a = b.dataset.v; bspec.accents = bspec.accents.includes(a) ? bspec.accents.filter(x => x !== a) : bspec.accents.concat(a); b.setAttribute('aria-pressed', bspec.accents.includes(a)); preview(); });
+  }
+  $$('#mode button', v).forEach(b => b.onclick = () => { bspec.mode = b.dataset.v; $$('#mode button', v).forEach(x => x.setAttribute('aria-pressed', x === b)); tiles(); preview(); });
+  $$('#font button', v).forEach(b => b.onclick = () => { bspec.text.font = b.dataset.v; $$('#font button', v).forEach(x => x.setAttribute('aria-pressed', x === b)); preview(); });
+  $$('#pos button', v).forEach(b => b.onclick = () => { bspec.text.pos = b.dataset.v; $$('#pos button', v).forEach(x => x.setAttribute('aria-pressed', x === b)); preview(); });
+  $('#txt', v).oninput = e => { bspec.text.str = e.target.value; preview(); };
+  $('#curve', v).oninput = e => { bspec.text.curve = +e.target.value; preview(); };
+  $('#rand', v).onclick = () => {
+    const pick = a => a[Math.floor(Math.random() * a.length)];
+    bspec.motif = pick(D.MOTIFS).id; bspec.frame = pick(D.FRAMES).id; bspec.mode = pick(['color', 'color', 'bw', 'fine']);
+    bspec.accents = D.ACCENTS.filter(() => Math.random() < .3).map(a => a.id).slice(0, 2);
+    bspec.text.font = pick(Object.keys(D.FONTS)); bspec.text.str = pick(['Mom', 'Wanderer', 'Stay Gold', 'Amor', 'Est. 2026', 'Hold On', '']); bspec.text.pos = bspec.text.str ? pick(['below', 'above']) : 'none';
+    route();
+  };
+  async function persist() {
+    const cv = await D.rasterBuilt(bspec, 300);
+    const name = (bspec.text.str && bspec.text.pos !== 'none' ? bspec.text.str + ' · ' : '') + (D.MOTIFS.find(m => m.id === bspec.motif) || {}).label;
+    const rec = { id: editing ? editing.id : 'my-' + uid(), kind: 'built', name, style: 'custom', line: bspec.mode === 'fine' ? 'fine' : 'bold', size: 9, spec: JSON.parse(JSON.stringify(bspec)), thumb: cv.toDataURL('image/png'), tags: ['Builder', { color: 'Colour', bw: 'Black & grey', fine: 'Fine line' }[bspec.mode]] };
+    if (editing) { Object.assign(editing, rec); } else S.my.push(rec);
+    [...rasterCache.keys()].filter(k => k.startsWith(rec.id + '|')).forEach(k => rasterCache.delete(k));
+    [...thumbCache.keys()].filter(k => k.startsWith(rec.id + '|')).forEach(k => thumbCache.delete(k));
+    snapTex.forEach((_, k) => { if (k.startsWith(rec.id + '|')) snapTex.delete(k); }); snapTexKey = '';
+    save(); return rec;
+  }
+  $('#savebtn', v).onclick = async () => { const r = await persist(); toast('Saved to My designs'); if (!editing) setTimeout(() => location.hash = '#/design/' + r.id, 600); };
+  $('#tryb', v).onclick = async () => { const r = await persist(); location.hash = '#/ar/' + r.id; };
+  tiles(); preview();
+}
+
+/* ================= AR camera ================= */
+const AR = { body: 'forearm', place: null, zoom: 1, roll: null, pitch: 0, pos: 2, split: false, splitX: .5, sun: 'med', care: 'ok', lineOverride: null, tab: 'age', hair: null, bg: 'room', sway: true };
+function viewAR(id, a2) {
+  let mode = '', tabArg = '';
+  if (a2 === 'age' || a2 === 'design' || a2 === 'adjust' || a2 === 'skin') tabArg = a2; else if (a2) mode = a2;
+  const h3 = location.hash.split('/')[4]; if (h3) tabArg = h3;
+  const d = getDesign(id) || getDesign(S.last) || getDesign('rose');
+  if (d.id !== S.last) { S.last = d.id; save(); }
+  if (AR.lastDesign !== d.id + mode) { AR.place = null; AR.lastDesign = d.id + mode; }
+  if (tabArg) AR.tab = tabArg;
+  app.innerHTML = `<div class="ar" id="ar">
+    <canvas class="gl" tabindex="0" aria-label="Simulated camera view. Drag the limb to rotate it, drag the tattoo to move it. Arrow keys move the tattoo, plus and minus resize, [ and ] rotate."></canvas>
+    <div class="vignette"></div>
+    <div class="ar-brackets scan" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div class="split-line" aria-hidden="true"><button tabindex="-1">${ico('split')}</button></div>
+    <span class="split-lab glass" id="sla">Fresh · Day 0</span><span class="split-lab glass" id="slb"></span>
+    <div class="ar-top"><a class="round glass" href="#/design/${esc(d.id)}" aria-label="Close camera">${ico('close')}</a>
+      <div class="track glass" id="track" role="status" aria-live="polite"><span class="dot"></span><span id="trk">Scanning skin surface…</span></div>
+      <button class="round glass" id="camtog" aria-pressed="${AR.bg === 'cam'}" aria-label="Use my camera as background">${ico('video')}</button></div>
+    <div class="ar-read" aria-hidden="true"><span class="pill glass" id="rd-place"></span><span class="pill glass" id="rd-size"></span></div>
+    <div class="age-badge" aria-live="polite"><div class="big" id="ab-big"></div><div class="sub" id="ab-sub"></div></div>
+    <button class="handle" id="handle" aria-label="Drag to resize and rotate the tattoo" hidden>${ico('resize')}</button>
+    <div class="ar-hint glass" id="hint">Drag arm to rotate · drag ink to move</div>
+    <div class="cam-row"><a class="l thumb-btn" id="lastcap" href="#/sessions" aria-label="Open sessions"></a>
+      <button class="shutter" id="shutter" aria-label="Capture photo"><span></span></button>
+      <div class="r"><button class="round glass" id="splittog" aria-pressed="${AR.split}" aria-label="Before and after split view">${ico('split')}</button></div></div>
+    <section class="sheet" aria-label="Camera controls"><div class="grab"></div>
+      <div class="sheet-tabs" role="tablist">${[['design', 'Design', 'design'], ['adjust', 'Adjust', 'adjust'], ['age', 'Age', 'clock'], ['skin', 'Skin', 'hand']].map(([k, l, ic]) => `<button role="tab" data-t="${k}" aria-selected="${AR.tab === k}">${ico(ic)}${l}</button>`).join('')}</div>
+      <div class="sheet-body" id="sb" role="tabpanel"></div></section>
+    <div class="flashfx"></div></div>`;
+  const root = $('#ar'), canvas = $('canvas.gl', root);
+  let E;
+  try { E = InkAR.create(canvas, { onFrame }); }
+  catch (e) { root.insertAdjacentHTML('beforeend', `<div class="modal" style="align-items:center;background:var(--ink)"><div class="empty" style="margin:20px;color:var(--bone)"><div class="h3">The simulated camera needs WebGL</div>Your browser blocked WebGL. You can still browse flash, build designs and prepare a consultation pack.<br><br><a class="btn btn-bone btn-sm" href="#/">Back to studio</a></div></div>`); return; }
+
+  const sk = () => SKINS[AR.skin != null ? AR.skin : S.settings.skin];
+  let tex = null, pal = null, line = lineOf(d, mode);
+  const B = () => E.body;
+  function applySkin() { const s = sk(); E.set({ skin: s.rgb, freckle: s.frk, hair: (AR.hair != null ? AR.hair : S.settings.hair) ? .32 : 0 }); }
+  function setBody(b) {
+    AR.body = b; E.setBody(b); AR.roll = -B().phiFace; AR.pitch = 0;
+    const z = B().defaultZ || 0; AR.place = { f: E.fracFromPhi(z, B().phiFace), z, L: AR.place ? AR.place.L : (d.size || 9), rot: AR.place ? AR.place.rot : 0 };
+  }
+  E.setBody(AR.body);
+  if (AR.roll == null) AR.roll = -B().phiFace;
+  if (!AR.place) { const z = B().defaultZ || 0; AR.place = { f: E.fracFromPhi(z, B().phiFace), z, L: d.size || 9, rot: 0 }; }
+  applySkin();
+  E.set({ zoom: AR.zoom, roll: AR.roll, pitch: AR.pitch, shiftY: -0.27, sway: AR.sway && S.settings.motion && !reduceMotion ? 1 : 0, scan: 0, reveal: 0, hasTat: 0 });
+
+  function syncPlace() {
+    if (!tex) return;
+    const hC = tex.aspectC >= 1 ? AR.place.L / tex.aspectC : AR.place.L;
+    E.state.place = { f: AR.place.f, z: AR.place.z, size: hC * tex.padH, rot: AR.place.rot };
+    const side = E.sideFor(AR.place.f);
+    AR.placeMult = side.mult; AR.side = side.name;
+    E.state.mods = [SUN[AR.sun], side.mult, CARE[AR.care], (AR.lineOverride || line) === 'fine' ? 1.7 : 1];
+    $('#rd-place').innerHTML = `${esc(side.name)}`;
+    $('#rd-size').innerHTML = `<b>${lenPair(hC * tex.aspectC, hC)}</b>`;
+  }
+  function syncAge() {
+    const days = daysAt(AR.pos);
+    if (AR.split) { E.set({ daysL: 0, daysR: days, split: AR.splitX }); } else E.set({ daysL: days, daysR: days, split: -1 });
+    const k = Math.round(AR.pos), st = STOPS[clamp(k, 0, 6)], exact = Math.abs(AR.pos - k) < .04;
+    const yrs = (days - 30) / 365;
+    $('#ab-big').innerHTML = exact ? st.big : days < 30 ? `Day <em>${Math.round(days)}</em>` : `Year <em>${yrs < 1 ? yrs.toFixed(1) : Math.round(yrs)}</em>`;
+    $('#ab-sub').textContent = AR.split ? 'Right of split' : (days < 1 ? 'Just tattooed' : days < 30 ? 'Since tattooing' : 'Simulated aging');
+    $('#slb').textContent = exact ? st.sub + (k > 2 ? '' : ' · ' + st.label) : (days < 30 ? 'Day ' + Math.round(days) : 'Year ' + (yrs < 1 ? yrs.toFixed(1) : Math.round(yrs)));
+    const sl = $('.split-line'); sl.classList.toggle('on', AR.split); sl.style.left = (AR.splitX * 100) + '%';
+    $('#sla').classList.toggle('on', AR.split); $('#slb').classList.toggle('on', AR.split);
+    $('#sla').style.left = '12px'; $('#slb').style.right = '12px';
+    $('#splittog').setAttribute('aria-pressed', AR.split);
+    if (AR.tab === 'age') updateAgePanel();
+  }
+
+  /* ---------- sheet panels ---------- */
+  const sb = $('#sb');
+  function renderTab() {
+    $$('.sheet-tabs button', root).forEach(b => b.setAttribute('aria-selected', b.dataset.t === AR.tab));
+    E.state.edit = AR.tab === 'adjust' ? 1 : 0;
+    if (AR.tab === 'design') {
+      const list = D.LIB.concat(S.my);
+      sb.innerHTML = `<div class="dtiles" role="group" aria-label="Designs">${list.map(x => `<button class="dtile" data-id="${esc(x.id)}" aria-pressed="${x.id === d.id}"><span class="tbox"><img data-thumb="${esc(x.id)}" alt=""></span>${esc(x.name)}</button>`).join('')}</div>
+        <div style="display:flex;gap:8px;margin-top:12px"><a class="btn btn-ghost btn-sm" style="flex:1" href="#/builder">${ico('layers')} Build your own</a><label class="btn btn-ghost btn-sm" style="flex:1" tabindex="0">${ico('upload')} Upload<input type="file" class="sr-only" accept="image/png,image/svg+xml,image/jpeg,image/webp" id="arup"></label></div>`;
+      hydrateThumbs(sb);
+      $$('.dtile', sb).forEach(b => b.onclick = () => { location.hash = '#/ar/' + b.dataset.id; });
+      $('#arup', sb).onchange = e => handleUpload(e.target.files[0]).then(() => { const l = S.my[S.my.length - 1]; if (l) location.hash = '#/ar/' + l.id; });
+      const cur = $('.dtile[aria-pressed=true]', sb); if (cur) cur.scrollIntoView({ inline: 'center', block: 'nearest' });
+    } else if (AR.tab === 'adjust') {
+      const z0 = B().zLim;
+      sb.innerHTML = `
+        <div class="row2"><label for="a-size">Size</label><input type="range" id="a-size" min="2" max="26" step="0.1" value="${AR.place.L}"><output class="mono small" id="o-size"></output></div>
+        <div class="row2"><label for="a-rot">Rotate</label><input type="range" id="a-rot" min="-180" max="180" step="1" value="${Math.round(AR.place.rot * 180 / Math.PI)}"><output class="mono small" id="o-rot"></output></div>
+        <div class="row2"><label for="a-wrap">Around</label><input type="range" id="a-wrap" min="-0.5" max="0.5" step="0.005" value="${(((AR.place.f % 1) + 1.5) % 1) - .5}"><output class="mono small" id="o-wrap"></output></div>
+        <div class="row2"><label for="a-z">Along</label><input type="range" id="a-z" min="${z0[0]}" max="${z0[1]}" step="0.1" value="${AR.place.z}"><output class="mono small" id="o-z"></output></div>
+        <div class="nudge" role="group" aria-label="Nudge tattoo">
+          <button data-n="l" aria-label="Move left">${ico('l')}</button><button data-n="r" aria-label="Move right">${ico('r')}</button><button data-n="u" aria-label="Move up">${ico('u')}</button><button data-n="d" aria-label="Move down">${ico('d')}</button><button data-n="rl" aria-label="Rotate counter-clockwise">${ico('rl')}</button><button data-n="rr" aria-label="Rotate clockwise">${ico('rr')}</button></div>
+        <div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-ghost btn-sm" style="flex:1" id="a-reset">Reset placement</button><button class="btn btn-ghost btn-sm" style="flex:1" id="a-view">Reset view</button></div>`;
+      const upd = () => {
+        $('#o-size').textContent = len(AR.place.L); $('#o-rot').textContent = Math.round(AR.place.rot * 180 / Math.PI) + '°';
+        const fw = (((AR.place.f % 1) + 1.5) % 1) - .5; $('#o-wrap').textContent = Math.round(fw * 360) + '°'; $('#o-z').textContent = (AR.place.z >= 0 ? '+' : '') + len(Math.abs(AR.place.z)).replace(' ', ' ');
+        $$('input[type=range]', sb).forEach(rangeFill);
+      };
+      $('#a-size').oninput = e => { AR.place.L = +e.target.value; syncPlace(); upd(); };
+      $('#a-rot').oninput = e => { AR.place.rot = +e.target.value * Math.PI / 180; syncPlace(); upd(); };
+      $('#a-wrap').oninput = e => { AR.place.f = +e.target.value; syncPlace(); upd(); };
+      $('#a-z').oninput = e => { AR.place.z = +e.target.value; syncPlace(); upd(); };
+      $$('.nudge button', sb).forEach(b => b.onclick = () => { nudge(b.dataset.n); renderTabValues(); });
+      $('#a-reset').onclick = () => { setBody(AR.body); syncPlace(); renderTab(); };
+      $('#a-view').onclick = () => { AR.roll = -B().phiFace; AR.pitch = 0; AR.zoom = 1; E.set({ roll: AR.roll, pitch: 0, zoom: 1 }); };
+      upd(); renderTabValues = () => { $('#a-size').value = AR.place.L; $('#a-rot').value = Math.round(AR.place.rot * 180 / Math.PI); $('#a-wrap').value = (((AR.place.f % 1) + 1.5) % 1) - .5; $('#a-z').value = AR.place.z; upd(); };
+    } else if (AR.tab === 'age') {
+      const ln = AR.lineOverride || line;
+      sb.innerHTML = `
+        <div class="timeline"><div class="tl-track"><div class="tl-ticks">${STOPS.map((_, i) => `<i style="left:${i / 6 * 100}%"></i>`).join('')}</div>
+          <input type="range" id="tl" min="0" max="6" step="0.01" value="${AR.pos}" aria-label="Aging timeline" aria-valuetext=""></div>
+          <div class="tl-labels">${STOPS.map((s, i) => `<button data-i="${i}" style="left:${i / 6 * 100}%" aria-label="Jump to ${s.label}">${s.label}<small>${i < 3 ? s.sub : '&nbsp;'}</small></button>`).join('')}</div></div>
+        <div class="age-meters"><div class="meter"><b id="m-spread">—</b><span>Line spread</span><div class="bar"><i id="mb-spread"></i></div></div><div class="meter"><b id="m-black">—</b><span>Black density</span><div class="bar"><i id="mb-black"></i></div></div><div class="meter"><b id="m-color">—</b><span>Colour</span><div class="bar"><i id="mb-color"></i></div></div></div>
+        <p class="stage-note" id="stnote"></p>
+        <div class="mods">
+          <label>Sun</label><div class="seg" data-k="sun">${[['low', 'Low'], ['med', 'Medium'], ['high', 'High']].map(([k, l]) => `<button data-v="${k}" aria-pressed="${AR.sun === k}">${l}</button>`).join('')}</div>
+          <label>Aftercare</label><div class="seg" data-k="care">${[['great', 'Great'], ['ok', 'Average'], ['poor', 'Poor']].map(([k, l]) => `<button data-v="${k}" aria-pressed="${AR.care === k}">${l}</button>`).join('')}</div>
+          <label>Lines</label><div class="seg" data-k="line">${[['fine', 'Fine'], ['bold', 'Bold']].map(([k, l]) => `<button data-v="${k}" aria-pressed="${ln === k}">${l}</button>`).join('')}</div>
+          <label>Placement</label><span class="small" id="placef" style="color:var(--bone-2)"></span>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-ghost btn-sm" style="flex:1" id="splitbtn">${ico('split')} ${AR.split ? 'Hide' : 'Fresh vs now'}</button><button class="btn btn-ghost btn-sm" style="flex:1" id="pairbtn">${ico('cam')} Save aging pair</button></div>
+        <details class="evidence"><summary><b>Why it ages this way</b></summary>
+          <ul><li><b>Black</b> (carbon) is the most stable ink; it fades slowest and holds contrast.</li>
+          <li><b>Light inks</b> — yellow, white and pastels — fade fastest; reds and oranges moderately; greens and blues in between.</li>
+          <li><b>Sun (UV)</b> is the main accelerant. Covered or SPF-protected skin keeps ink longer.</li>
+          <li><b>Ink migrates</b> slowly in the dermis, so lines widen; <b>fine lines</b> blur proportionally more than bold ones.</li>
+          <li><b>Friction &amp; placement</b> matter: hands, fingers and outer forearms age faster than calves or backs.</li>
+          <li>Many people consider a <b>touch-up after 10–15 years</b>.</li></ul>
+          <em>Illustrative simulation — your artist and dermatologist know your skin.</em></details>`;
+      const tl = $('#tl', sb);
+      tl.oninput = () => { AR.pos = +tl.value; syncAge(); };
+      tl.onchange = () => { const k = Math.round(AR.pos); if (Math.abs(AR.pos - k) < .18) { AR.pos = k; tl.value = k; syncAge(); } };
+      $$('.tl-labels button', sb).forEach(b => b.onclick = () => animateTo(+b.dataset.i));
+      $$('.mods .seg', sb).forEach(sg => $$('button', sg).forEach(b => b.onclick = () => {
+        const k = sg.dataset.k; if (k === 'line') AR.lineOverride = b.dataset.v; else AR[k] = b.dataset.v;
+        $$('button', sg).forEach(x => x.setAttribute('aria-pressed', x === b)); syncPlace(); syncAge();
+      }));
+      $('#splitbtn', sb).onclick = toggleSplit;
+      $('#pairbtn', sb).onclick = savePair;
+      updateAgePanel();
+    } else if (AR.tab === 'skin') {
+      const hair = AR.hair != null ? AR.hair : S.settings.hair;
+      sb.innerHTML = `<span class="sublab">Skin tone · Fitzpatrick</span><div class="swatches" role="group" aria-label="Skin tone">${SKINS.map((s, i) => `<button class="swatch" style="background:${s.hex}" data-i="${i}" aria-pressed="${(AR.skin != null ? AR.skin : S.settings.skin) === i}" aria-label="Type ${s.id}">${s.id}</button>`).join('')}</div>
+        <span class="sublab">Body part</span><div class="body-pick" role="group" aria-label="Body part">${[['forearm', 'Forearm'], ['upper', 'Upper arm'], ['calf', 'Calf']].map(([k, l]) => `<button data-b="${k}" aria-pressed="${AR.body === k}">${ico(k)}${l}</button>`).join('')}</div>
+        <span class="sublab">Scene</span>
+        <div class="toggle-row"><span>Body hair</span><button class="switch" role="switch" id="sw-hair" aria-checked="${hair}" aria-label="Body hair"></button></div>
+        <div class="toggle-row"><span>Hand-held camera motion</span><button class="switch" role="switch" id="sw-sway" aria-checked="${AR.sway && S.settings.motion && !reduceMotion}" aria-label="Hand-held motion"></button></div>
+        <div class="toggle-row"><span>Live camera background <span class="muted small">(optional)</span></span><button class="switch" role="switch" id="sw-cam" aria-checked="${AR.bg === 'cam'}" aria-label="Live camera background"></button></div>`;
+      $$('.swatch', sb).forEach(b => b.onclick = () => { AR.skin = +b.dataset.i; $$('.swatch', sb).forEach(x => x.setAttribute('aria-pressed', x === b)); applySkin(); });
+      $$('.body-pick button', sb).forEach(b => b.onclick = () => { setBody(b.dataset.b); $$('.body-pick button', sb).forEach(x => x.setAttribute('aria-pressed', x === b)); E.set({ roll: AR.roll, pitch: 0 }); syncPlace(); syncAge(); rescan(); });
+      $('#sw-hair', sb).onclick = e => { AR.hair = !(AR.hair != null ? AR.hair : S.settings.hair); e.currentTarget.setAttribute('aria-checked', AR.hair); applySkin(); };
+      $('#sw-sway', sb).onclick = e => { AR.sway = !(E.state.sway > 0); E.state.sway = AR.sway ? 1 : 0; e.currentTarget.setAttribute('aria-checked', AR.sway); };
+      $('#sw-cam', sb).onclick = () => toggleCam();
+    }
+  }
+  let renderTabValues = () => {};
+  function updateAgePanel() {
+    if (!$('#m-spread')) return;
+    const days = daysAt(AR.pos), ln = AR.lineOverride || line;
+    const m = ageModel(days, { sun: SUN[AR.sun], place: AR.placeMult || 1, care: CARE[AR.care] }, ln, pal);
+    $('#m-spread').textContent = days < 20 ? '0.00 mm' : '+' + m.spread.toFixed(2) + ' mm';
+    $('#mb-spread').style.width = clamp(m.spread / .6 * 100, 2, 100) + '%'; $('#mb-spread').style.background = m.spread > .3 ? 'var(--verm-2)' : m.spread > .15 ? 'var(--gold)' : 'var(--ok)';
+    const bk = m.black * (days < 25 ? 1 : 1); $('#m-black').textContent = Math.round(bk * 100) + '%'; $('#mb-black').style.width = bk * 100 + '%';
+    if (m.color == null) { $('#m-color').textContent = 'n/a'; $('#mb-color').style.width = '0'; }
+    else { $('#m-color').textContent = Math.round(m.color * 100) + '%'; $('#mb-color').style.width = m.color * 100 + '%'; $('#mb-color').style.background = m.color < .62 ? 'var(--verm-2)' : m.color < .8 ? 'var(--gold)' : 'var(--ok)'; }
+    const k = clamp(Math.round(AR.pos), 0, 6);
+    $('#stnote').innerHTML = STOPS[k].note + (m.touch && k >= 4 ? ' <b style="color:var(--gold)">Touch-up likely worth discussing.</b>' : '');
+    $('#placef').innerHTML = `${esc(AR.side || '')} · ×${(AR.placeMult || 1).toFixed(2)} fade rate`;
+    $$('.tl-labels button', sb).forEach((b, i) => b.setAttribute('aria-current', Math.abs(AR.pos - i) < .04));
+    const tl = $('#tl', sb); if (tl) { tl.value = AR.pos; rangeFill(tl); tl.setAttribute('aria-valuetext', STOPS[k].label); }
+  }
+  let anim = 0;
+  function animateTo(i) {
+    cancelAnimationFrame(anim);
+    if (reduceMotion) { AR.pos = i; syncAge(); return; }
+    const from = AR.pos, t0 = performance.now(), dur = 520 + Math.abs(i - from) * 90;
+    const stepf = now => { const t = clamp((now - t0) / dur, 0, 1), e = t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; AR.pos = from + (i - from) * e; syncAge(); if (t < 1) anim = requestAnimationFrame(stepf); };
+    anim = requestAnimationFrame(stepf);
+  }
+  function toggleSplit() { AR.split = !AR.split; if (AR.split && AR.pos < 3) AR.pos = 5; syncAge(); if (AR.tab === 'age') renderTab(); }
+  $$('.sheet-tabs button', root).forEach(b => b.onclick = () => { AR.tab = b.dataset.t; renderTab(); });
+  $('#splittog').onclick = toggleSplit;
+
+  /* ---------- tracking intro ---------- */
+  const trk = $('#trk'), track = $('#track'), brk = $('.ar-brackets');
+  let scanStart = 0, phase = 'scan', confT = 0;
+  function rescan() { scanStart = performance.now(); phase = 'scan'; track.classList.remove('locked'); brk.classList.add('scan'); brk.classList.remove('locked'); trk.textContent = 'Scanning skin surface…'; E.set({ scan: 0.001, reveal: 0, lock: 0 }); }
+  function tickIntro(now) {
+    if (phase === 'scan') {
+      const t = (now - scanStart) / (reduceMotion ? 1 : 2300);
+      E.state.scan = clamp(t, 0.001, 1);
+      if (t > .55 && trk.textContent.startsWith('Scanning')) trk.textContent = 'Mapping surface · ' + Math.round(t * 100) + '%';
+      else if (t > .55) trk.textContent = 'Mapping surface · ' + Math.min(99, Math.round(t * 100)) + '%';
+      if (t >= 1) { phase = 'lock'; scanStart = now; E.state.scan = 0; E.state.lock = 1; track.classList.add('locked'); brk.classList.remove('scan'); brk.classList.add('locked'); }
+    } else if (phase === 'lock') {
+      const t = (now - scanStart) / (reduceMotion ? 1 : 900);
+      E.state.lock = clamp(1 - t, 0, 1); E.state.reveal = tex ? clamp(t * 1.3, 0, 1) : 0;
+      if (t >= 1 && tex) { phase = 'live'; E.state.lock = 0; E.state.reveal = 1; }
+    }
+    if (phase !== 'scan' && now - confT > 900) { confT = now; trk.innerHTML = `Tracking locked <span class="conf">${(94 + Math.random() * 4.6).toFixed(1)}%</span>`; }
+  }
+
+  /* ---------- per-frame HUD ---------- */
+  const handle = $('#handle');
+  function corners() {
+    if (!tex) return null;
+    const hC = tex.aspectC >= 1 ? AR.place.L / tex.aspectC : AR.place.L, wC = hC * tex.aspectC;
+    const per = E.perimeter(AR.place.z), cr = Math.cos(AR.place.rot), sr = Math.sin(AR.place.rot);
+    const pt = (X, Y) => { const dx = cr * X - sr * Y, dz = sr * X + cr * Y; return E.project(AR.place.f + dx / per, AR.place.z + dz); };
+    return { c: E.project(AR.place.f, AR.place.z), tr: pt(wC / 2 + .5, hC / 2 + .5), w: wC, h: hC };
+  }
+  function onFrame(now) {
+    tickIntro(now);
+    if (phase === 'live' && E.state.edit < .99 && AR.tab === 'adjust') E.state.edit = 1;
+    const k = corners();
+    if (k && k.c && k.tr && phase === 'live' && AR.tab === 'adjust' && k.c.facing) {
+      handle.hidden = false; handle.style.left = k.tr.x + 'px'; handle.style.top = k.tr.y + 'px';
+    } else handle.hidden = true;
+  }
+
+  /* ---------- gestures ---------- */
+  const ptrs = new Map(); let gesture = null;
+  function local(e) { const r = canvas.getBoundingClientRect(); const s = r.width / canvas.clientWidth; return { x: (e.clientX - r.left) / s, y: (e.clientY - r.top) / s }; }
+  function hitTattoo(p) { const k = corners(); if (!k || !k.c || !k.tr || !k.c.facing) return false; const R = Math.hypot(k.tr.x - k.c.x, k.tr.y - k.c.y) * .85; return Math.hypot(p.x - k.c.x, p.y - k.c.y) < R; }
+  function jac() {
+    const e1 = .004, e2 = .2; const c = E.project(AR.place.f, AR.place.z), a = E.project(AR.place.f + e1, AR.place.z), b = E.project(AR.place.f, AR.place.z + e2);
+    return { a: (a.x - c.x) / e1, b: (b.x - c.x) / e2, c: (a.y - c.y) / e1, d: (b.y - c.y) / e2 };
+  }
+  function moveBy(dx, dy) {
+    const J = jac(), det = J.a * J.d - J.b * J.c; if (Math.abs(det) < 1e-6) return;
+    const df = (J.d * dx - J.b * dy) / det, dz = (-J.c * dx + J.a * dy) / det;
+    AR.place.f += clamp(df, -.05, .05); AR.place.z = clamp(AR.place.z + clamp(dz, -2, 2), B().zLim[0], B().zLim[1]); syncPlace();
+  }
+  function hideHint() { const h = $('#hint'); if (h) h.style.opacity = 0; }
+  canvas.addEventListener('pointerdown', e => {
+    canvas.setPointerCapture(e.pointerId); const p = local(e); ptrs.set(e.pointerId, p); hideHint();
+    if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; gesture = { type: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y), z0: AR.zoom }; return; }
+    gesture = phase === 'live' && hitTattoo(p) ? { type: 'move', last: p } : { type: 'orbit', last: p };
+    if (gesture.type === 'move') { E.state.edit = 1; }
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!ptrs.has(e.pointerId)) { canvas.style.cursor = phase === 'live' && hitTattoo(local(e)) ? 'move' : 'grab'; return; }
+    const p = local(e); ptrs.set(e.pointerId, p);
+    if (!gesture) return;
+    if (gesture.type === 'pinch' && ptrs.size >= 2) { const [a, b] = [...ptrs.values()]; AR.zoom = clamp(gesture.z0 * Math.hypot(a.x - b.x, a.y - b.y) / gesture.d0, .7, 2.8); E.state.zoom = AR.zoom; return; }
+    const dx = p.x - gesture.last.x, dy = p.y - gesture.last.y; gesture.last = p;
+    if (gesture.type === 'move') moveBy(dx, dy);
+    else if (gesture.type === 'orbit') { AR.roll += dx * .009; AR.pitch = clamp(AR.pitch + dy * .004, -.35, .35); E.set({ roll: AR.roll, pitch: AR.pitch }); }
+  });
+  const up = e => { ptrs.delete(e.pointerId); if (ptrs.size < 2 && gesture && gesture.type === 'pinch') gesture = null; if (!ptrs.size) { if (gesture && gesture.type === 'move' && AR.tab !== 'adjust') E.state.edit = 0; gesture = null; renderTabValues(); } };
+  canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
+  canvas.addEventListener('wheel', e => { e.preventDefault(); AR.zoom = clamp(AR.zoom * Math.exp(-e.deltaY * .0012), .7, 2.8); E.state.zoom = AR.zoom; }, { passive: false });
+  // handle: scale + rotate around tattoo centre
+  handle.addEventListener('pointerdown', e => {
+    e.stopPropagation(); handle.setPointerCapture(e.pointerId);
+    const k = corners(); const p = local(e);
+    // which way does +rot turn on screen here?
+    const r0 = AR.place.rot; AR.place.rot += .05; const k2 = corners(); AR.place.rot = r0;
+    const sgn = Math.sign(Math.atan2(k2.tr.y - k2.c.y, k2.tr.x - k2.c.x) - Math.atan2(k.tr.y - k.c.y, k.tr.x - k.c.x)) || 1;
+    gesture = { type: 'handle', c: k.c, v0: [p.x - k.c.x, p.y - k.c.y], L0: AR.place.L, rot0: AR.place.rot, sgn };
+  });
+  handle.addEventListener('pointermove', e => {
+    if (!gesture || gesture.type !== 'handle') return;
+    const p = local(e), v = [p.x - gesture.c.x, p.y - gesture.c.y];
+    const s = Math.hypot(v[0], v[1]) / Math.max(10, Math.hypot(gesture.v0[0], gesture.v0[1]));
+    const da = Math.atan2(v[1], v[0]) - Math.atan2(gesture.v0[1], gesture.v0[0]);
+    AR.place.L = clamp(gesture.L0 * s, 2, 26); AR.place.rot = gesture.rot0 + da * gesture.sgn; syncPlace(); renderTabValues();
+  });
+  handle.addEventListener('pointerup', () => { gesture = null; });
+  handle.addEventListener('keydown', e => { if (e.key === '+' || e.key === '=') nudge('+'); if (e.key === '-') nudge('-'); });
+  function nudge(n) {
+    const per = E.perimeter(AR.place.z);
+    if (n === 'l') AR.place.f -= .4 / per; if (n === 'r') AR.place.f += .4 / per;
+    if (n === 'u') AR.place.z = clamp(AR.place.z + .4, B().zLim[0], B().zLim[1]); if (n === 'd') AR.place.z = clamp(AR.place.z - .4, B().zLim[0], B().zLim[1]);
+    if (n === 'rl') AR.place.rot += 5 * Math.PI / 180; if (n === 'rr') AR.place.rot -= 5 * Math.PI / 180;
+    if (n === '+') AR.place.L = clamp(AR.place.L + .5, 2, 26); if (n === '-') AR.place.L = clamp(AR.place.L - .5, 2, 26);
+    syncPlace();
+  }
+  canvas.addEventListener('keydown', e => {
+    const map = { ArrowLeft: 'l', ArrowRight: 'r', ArrowUp: 'u', ArrowDown: 'd', '[': 'rl', ']': 'rr', '+': '+', '=': '+', '-': '-' };
+    if (map[e.key]) { e.preventDefault(); nudge(map[e.key]); renderTabValues(); }
+    if (e.key === ',' || e.key === '.') { AR.roll += e.key === ',' ? -.1 : .1; E.state.roll = AR.roll; }
+  });
+  // split drag
+  const sl = $('.split-line');
+  sl.addEventListener('pointerdown', e => { sl.setPointerCapture(e.pointerId); gesture = { type: 'split' }; });
+  sl.addEventListener('pointermove', e => { if (!gesture || gesture.type !== 'split') return; AR.splitX = clamp(local(e).x / canvas.clientWidth, .08, .92); syncAge(); });
+  sl.addEventListener('pointerup', () => gesture = null);
+
+  /* ---------- camera background ---------- */
+  let stream = null, video = null;
+  async function toggleCam() {
+    if (AR.bg === 'cam') { stopCam(); AR.bg = 'room'; E.set({ camMode: 0 }); syncCamUI(); return; }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 } }, audio: false });
+      video = document.createElement('video'); video.muted = true; video.playsInline = true; video.srcObject = stream; await video.play();
+      const fm = stream.getVideoTracks()[0].getSettings().facingMode;
+      E.set({ camMode: 1, video, mirror: fm === 'user' || !fm ? 1 : 0 }); AR.bg = 'cam'; toast('Live camera behind the simulated limb');
+    } catch (e) { AR.bg = 'room'; toast('Camera unavailable — using the studio scene'); }
+    syncCamUI();
+  }
+  function stopCam() { if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; video = null; }
+  function syncCamUI() { $('#camtog').setAttribute('aria-pressed', AR.bg === 'cam'); const sw = $('#sw-cam'); if (sw) sw.setAttribute('aria-checked', AR.bg === 'cam'); }
+  $('#camtog').onclick = toggleCam;
+  if (AR.bg === 'cam') { AR.bg = 'room'; toggleCam(); }
+
+  /* ---------- capture ---------- */
+  async function capture(silent) {
+    const edit = E.state.edit; E.state.edit = 0;
+    const url = E.capture('image/png'); E.state.edit = edit;
+    const img = await loadImg(url);
+    const W = 720, H = Math.round(W * img.height / img.width);
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const x = cv.getContext('2d');
+    x.drawImage(img, 0, 0, W, H);
+    const days = daysAt(AR.pos), k = Math.round(AR.pos), exact = Math.abs(AR.pos - k) < .04;
+    const stage = exact ? STOPS[k].sub + (k < 3 ? ' · ' + STOPS[k].label : '') : (days < 30 ? 'Day ' + Math.round(days) : 'Year ' + Math.round((days - 30) / 365));
+    const g = x.createLinearGradient(0, H - 150, 0, H); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.72)'); x.fillStyle = g; x.fillRect(0, H - 150, W, 150);
+    x.fillStyle = '#f3ecdf'; x.font = '500 34px Fraunces, Lora, Georgia, serif'; x.fillText(d.name, 32, H - 66);
+    x.font = '600 17px "JetBrains Mono", "DejaVu Sans Mono", monospace'; x.fillStyle = 'rgba(243,236,223,.82)';
+    const hC = tex.aspectC >= 1 ? AR.place.L / tex.aspectC : AR.place.L;
+    x.fillText(`${(AR.split ? 'FRESH | ' : '') + stage.toUpperCase()} · ${AR.side.toUpperCase()} · ${lenPair(hC * tex.aspectC, hC).toUpperCase()}`, 32, H - 34);
+    x.textAlign = 'right'; x.fillStyle = 'rgba(243,236,223,.55)'; x.fillText('INK STUDY · SIMULATED', W - 32, 64); x.textAlign = 'left';
+    const full = cv.toDataURL('image/png');
+    const th = document.createElement('canvas'); th.width = 240; th.height = Math.round(240 * H / W); th.getContext('2d').drawImage(cv, 0, 0, th.width, th.height);
+    const cap = { id: 'c' + uid(), t: Date.now(), design: d.id, mode, designName: d.name, body: AR.body, side: AR.side, sizeCm: [+(hC * tex.aspectC).toFixed(1), +hC.toFixed(1)], days: Math.round(days), stage: (AR.split ? 'Fresh | ' : '') + stage, sun: AR.sun, care: AR.care, line: AR.lineOverride || line, skin: SKINS[AR.skin != null ? AR.skin : S.settings.skin].id, thumb: th.toDataURL('image/jpeg', .82) };
+    await IDB.set('cap:' + cap.id, full);
+    S.caps.push(cap); if (!S.consult.sel.includes(cap.id)) S.consult.sel.push(cap.id); save();
+    $('#lastcap').style.backgroundImage = `url(${cap.thumb})`;
+    if (!silent) { const fx = $('.flashfx'); fx.classList.remove('go'); void fx.offsetWidth; fx.classList.add('go'); toast('Saved to Sessions · ' + stage); }
+    return cap;
+  }
+  $('#shutter').onclick = () => { if (tex) capture(); };
+  async function savePair() {
+    const pos = AR.pos, split = AR.split; AR.split = false;
+    AR.pos = 0; syncAge(); const a = await capture(true);
+    AR.pos = pos < 3 ? 5 : pos; syncAge(); const b = await capture(true);
+    AR.pos = pos; AR.split = split; syncAge();
+    S.cmp = [a.id, b.id]; save();
+    const fx = $('.flashfx'); fx.classList.remove('go'); void fx.offsetWidth; fx.classList.add('go');
+    toast('Aging pair saved — open Compare in Sessions');
+  }
+  const lc = S.caps[S.caps.length - 1]; if (lc) $('#lastcap').style.backgroundImage = `url(${lc.thumb})`;
+
+  /* ---------- load design ---------- */
+  (async () => {
+    const t = await textureFor(d, mode || undefined);
+    tex = t; pal = analyze(t.canvas);
+    E.setTattoo(t.tex, t.aspectP); E.state.hasTat = 1; E.state.reveal = phase === 'live' ? 1 : 0;
+    syncPlace(); syncAge(); renderTab();
+  })();
+  syncAge(); renderTab(); rescan();
+  E.start();
+  const onVis = () => { if (document.hidden) E.stop(); else E.start(); };
+  document.addEventListener('visibilitychange', onVis);
+  cleanup = () => { cancelAnimationFrame(anim); document.removeEventListener('visibilitychange', onVis); stopCam(); AR.zoom = E.state.zoom; E.destroy(); };
+  window.__ar = { E, AR, capture, savePair, syncAge, syncPlace, renderTab, animateTo };
+}
+
+/* ================= Sessions ================= */
+function viewSessions() {
+  const caps = S.caps.slice().reverse();
+  const v = shell('sessions', `
+  <div class="page-head"><span class="eyebrow">${caps.length} capture${caps.length === 1 ? '' : 's'} · stored on this device</span><h1 class="display">Sessions</h1></div>
+  <section class="section" style="margin-top:16px"><div class="grid2">
+    <a class="promo" href="#/compare" style="margin:0;padding:16px;display:block;text-decoration:none;color:inherit;background:linear-gradient(140deg,#1d1a17,#121110);border-color:var(--line-2)"><span class="eyebrow">Side by side</span><div class="h2" style="margin:8px 0 4px;font-size:21px">Compare</div><span class="muted small">Two captures, a slider, the differences.</span></a>
+    <a class="promo" href="#/consult" style="margin:0;padding:16px;display:block;text-decoration:none;color:inherit"><span class="eyebrow">For your artist</span><div class="h2" style="margin:8px 0 4px;font-size:21px">Consult pack</div><span class="muted small">Captures, notes, questions → PDF.</span></a>
+  </div></section>
+  <section class="section">${caps.length ? `<div class="sessions">${caps.map(c => `<button class="sess" data-id="${c.id}" aria-label="Open capture ${esc(c.designName)}, ${esc(c.stage)}"><img src="${c.thumb}" alt=""><span class="lbl">${esc(c.designName)}<br>${esc(c.stage)}</span></button>`).join('')}</div>`
+      : `<div class="empty"><div class="h3">Nothing captured yet</div>Open the AR camera and press the shutter — or save an aging pair from the Age panel.<br><br><a class="btn btn-primary btn-sm" href="#/ar/${esc(S.last)}">${ico('cam')} Open camera</a></div>`}</section>`);
+  $$('.sess', v).forEach(b => b.onclick = () => openCapture(b.dataset.id));
+}
+async function openCapture(id) {
+  const c = S.caps.find(x => x.id === id); if (!c) return;
+  const full = await IDB.get('cap:' + id) || c.thumb;
+  const m = document.createElement('div'); m.className = 'modal'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-label', 'Capture');
+  m.innerHTML = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div><span class="eyebrow">${new Date(c.t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${esc(c.side)}</span><div class="h2" style="margin-top:4px">${esc(c.designName)}</div></div><button class="icon-btn" data-x aria-label="Close">${ico('close')}</button></div>
+    <img src="${full}" alt="" style="width:100%;border-radius:16px;display:block;max-height:420px;object-fit:cover">
+    <div style="display:flex;gap:8px;margin-top:14px"><button class="btn btn-primary btn-sm" style="flex:1" data-cmp>Compare</button><a class="btn btn-ghost btn-sm" style="flex:1" href="#/ar/${esc(c.design)}${c.mode ? '/' + c.mode : ''}" data-x2>Re-open in AR</a><button class="btn btn-ghost btn-sm" data-del aria-label="Delete capture">${ico('trash')}</button></div></div>`;
+  app.appendChild(m);
+  const close = () => m.remove();
+  m.onclick = e => { if (e.target === m || e.target.closest('[data-x]')) close(); };
+  $('[data-x2]', m).onclick = close;
+  $('[data-cmp]', m).onclick = () => { const other = S.caps.slice().reverse().find(x => x.id !== id); S.cmp = [id, other ? other.id : id]; save(); close(); location.hash = '#/compare'; };
+  $('[data-del]', m).onclick = () => { S.caps = S.caps.filter(x => x.id !== id); S.consult.sel = S.consult.sel.filter(x => x !== id); IDB.del('cap:' + id); save(); close(); route(); };
+}
+
+/* ================= Compare ================= */
+let cmpMode = 'slider';
+function viewCompare() {
+  if (S.caps.length < 2) {
+    shell('sessions', `<div class="back-row"><a class="icon-btn" href="#/sessions" aria-label="Back">${ico('back')}</a><span class="eyebrow">Compare</span></div>
+      <div class="page-head"><h1 class="display" style="margin-top:8px">Compare <em>two</em></h1></div>
+      <section class="section"><div class="empty"><div class="h3">You need two captures</div>Capture two placements, or let us make a Fresh vs Year 10 pair of <b>${esc((getDesign(S.last) || {}).name || 'your design')}</b> right now.<br><br><button class="btn btn-primary btn-sm" id="mk">${ico('spark')} Make an aging pair</button></div></section>`);
+    $('#mk').onclick = async () => { $('#mk').textContent = 'Rendering…'; await makePair(S.last); route(); };
+    return;
+  }
+  let [a, b] = (S.cmp || []).map(id => S.caps.find(c => c.id === id));
+  if (!a || !b) { a = S.caps[S.caps.length - 2]; b = S.caps[S.caps.length - 1]; }
+  const v = shell('sessions', `<div class="back-row"><a class="icon-btn" href="#/sessions" aria-label="Back">${ico('back')}</a><span class="eyebrow">Compare</span><span style="flex:1"></span><div class="seg" style="width:180px" role="group" aria-label="Compare mode"><button data-m="slider" aria-pressed="${cmpMode === 'slider'}">Slider</button><button data-m="side" aria-pressed="${cmpMode === 'side'}">Side by side</button></div></div>
+    <div id="cmpbox"></div>
+    <div class="pick-row" role="group" aria-label="Choose captures. Tap to set A, tap again to set B">${S.caps.slice().reverse().map(c => `<button data-id="${c.id}" class="${c.id === a.id ? 'a' : c.id === b.id ? 'b' : ''}" aria-label="${esc(c.designName)} ${esc(c.stage)}"><img src="${c.thumb}" alt="">${c.id === a.id ? '<b>A</b>' : c.id === b.id ? '<b>B</b>' : ''}</button>`).join('')}</div>
+    <div class="cmp-table" id="ctab"></div>
+    <section class="section"><a class="btn btn-primary btn-block" href="#/consult">${ico('doc')} Add to consultation pack</a></section>`);
+  async function draw() {
+    const [fa, fb] = await Promise.all([IDB.get('cap:' + a.id), IDB.get('cap:' + b.id)]);
+    const A = fa || a.thumb, Bi = fb || b.thumb;
+    $('#cmpbox', v).innerHTML = cmpMode === 'slider'
+      ? `<div class="cmp" style="--x:50%"><img src="${A}" alt="A: ${esc(a.designName)} ${esc(a.stage)}"><div class="b-wrap"><img src="${Bi}" alt="B: ${esc(b.designName)} ${esc(b.stage)}"></div><div class="div"><span>${ico('split')}</span></div><span class="lab a glass">A · ${esc(a.stage)}</span><span class="lab b glass">B · ${esc(b.stage)}</span><input type="range" min="0" max="100" value="50" aria-label="Reveal B"></div>`
+      : `<div class="cmp-side"><figure><img src="${A}" alt=""><figcaption>A · ${esc(a.stage)}<br>${esc(a.side)}</figcaption></figure><figure><img src="${Bi}" alt=""><figcaption>B · ${esc(b.stage)}<br>${esc(b.side)}</figcaption></figure></div>`;
+    const r = $('.cmp input', v); if (r) r.oninput = () => $('.cmp', v).style.setProperty('--x', r.value + '%');
+    const row = (k, x, y) => `<div><span>${k}</span><span>${esc(x)}</span><span style="${x !== y ? 'color:var(--verm-2)' : ''}">${esc(y)}</span></div>`;
+    $('#ctab', v).innerHTML = row('', 'A', 'B') + row('Design', a.designName, b.designName) + row('Placement', a.side, b.side) + row('Size', lenPair(a.sizeCm[0], a.sizeCm[1]), lenPair(b.sizeCm[0], b.sizeCm[1])) + row('Stage', a.stage, b.stage) + row('Sun / care', a.sun + ' / ' + a.care, b.sun + ' / ' + b.care) + row('Skin', 'Type ' + a.skin, 'Type ' + b.skin);
+  }
+  draw();
+  $$('.seg button', v).forEach(btn => btn.onclick = () => { cmpMode = btn.dataset.m; $$('.seg button', v).forEach(x => x.setAttribute('aria-pressed', x === btn)); draw(); });
+  let next = 'a';
+  $$('.pick-row button', v).forEach(btn => btn.onclick = () => {
+    const c = S.caps.find(x => x.id === btn.dataset.id); if (next === 'a') { a = c; next = 'b'; } else { b = c; next = 'a'; }
+    S.cmp = [a.id, b.id]; save(); route();
+  });
+}
+async function makePair(designId) {
+  const d = getDesign(designId) || getDesign('rose');
+  const out = [];
+  for (const k of [0, 5]) {
+    const url = await snap({ design: d.id, w: 393, h: 600, dpr: 1.6, days: STOPS[k].days, zoom: 1.25, sizeCm: d.size || 9, shiftY: -0.05, type: 'image/png' });
+    if (!url) break;
+    const th = await (async () => { const img = await loadImg(url); const c = document.createElement('canvas'); c.width = 240; c.height = Math.round(240 * img.height / img.width); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', .82); })();
+    const cap = { id: 'c' + uid(), t: Date.now(), design: d.id, designName: d.name, body: 'forearm', side: 'Inner forearm', sizeCm: [d.size || 9, d.size || 9], days: STOPS[k].days, stage: STOPS[k].sub + (k < 3 ? ' · ' + STOPS[k].label : ''), sun: 'med', care: 'ok', line: lineOf(d), skin: SKINS[S.settings.skin].id, thumb: th };
+    await IDB.set('cap:' + cap.id, url); S.caps.push(cap); out.push(cap.id);
+  }
+  if (out.length === 2) { S.cmp = out; out.forEach(id => { if (!S.consult.sel.includes(id)) S.consult.sel.push(id); }); }
+  save();
+}
+
+/* ================= Consultation pack ================= */
+const QUESTIONS = [
+  { id: 'q1', g: 'Placement', t: 'Is this placement and size right for the level of detail in the design?' },
+  { id: 'q2', g: 'Placement', t: 'How will it look when my arm moves or the skin stretches?' },
+  { id: 'q3', g: 'Linework', t: 'Would bolder outlines or more spacing help it stay readable in 10+ years?' },
+  { id: 'q4', g: 'Linework', t: 'Are any fine details too small to hold up as the ink settles?' },
+  { id: 'q5', g: 'Over time', t: 'Which colours in this palette fade first on my skin tone, and what would you swap?' },
+  { id: 'q6', g: 'Over time', t: 'When would you expect a touch-up, and is it included?' },
+  { id: 'q7', g: 'Healing', t: 'What aftercare do you recommend, and how long until it’s fully healed?' },
+  { id: 'q8', g: 'Practical', t: 'How many sessions, roughly how long, and what’s the deposit?' }
+];
+function viewConsult() {
+  const C = S.consult; const caps = S.caps.slice().reverse();
+  const v = shell('sessions', `<div class="back-row"><a class="icon-btn" href="#/sessions" aria-label="Back">${ico('back')}</a><span class="eyebrow">Consultation pack</span></div>
+    <div class="page-head"><h1 class="display" style="margin-top:8px">Brief your <em>artist</em></h1><p class="muted small" style="margin:8px 0 0">Choose captures, add notes and questions, then export a one-page PDF to bring or email.</p></div>
+    <div class="steps" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    <section class="section"><div class="section-head"><h2 class="h2">1 · Captures</h2><span class="muted small" id="selc"></span></div>
+      ${caps.length ? `<div class="sessions">${caps.map(c => `<label class="sess"><img src="${c.thumb}" alt=""><input type="checkbox" data-id="${c.id}" ${C.sel.includes(c.id) ? 'checked' : ''} aria-label="Include ${esc(c.designName)} ${esc(c.stage)}"><span class="lbl">${esc(c.designName)}<br>${esc(c.stage)}</span></label>`).join('')}</div>`
+        : `<div class="empty">No captures yet. <button class="link" id="mk2">Make an aging pair</button> or <a class="link" href="#/ar/${esc(S.last)}">open the camera</a>.</div>`}</section>
+    <section class="section"><h2 class="h2" style="margin-bottom:12px">2 · Your idea</h2>
+      <textarea class="field" id="idea" placeholder="What it means to you, the feel you’re after, references you love…" aria-label="Your idea">${esc(C.idea)}</textarea>
+      <textarea class="field" id="notes" style="margin-top:8px;min-height:72px" placeholder="Practical notes: budget, timing, allergies, previous tattoos…" aria-label="Practical notes">${esc(C.notes)}</textarea></section>
+    <section class="section"><div class="section-head"><h2 class="h2">3 · Questions</h2><span class="muted small" id="aibox"></span></div>
+      <div class="qlist">${QUESTIONS.concat(C.custom.map((t, i) => ({ id: 'c' + i, g: 'Mine', t }))).map(q => `<label class="q"><input type="checkbox" data-q="${q.id}" ${C.q.includes(q.id) || q.id[0] === 'c' ? 'checked' : ''}><span><small>${esc(q.g)}</small>${esc(q.t)}</span></label>`).join('')}</div>
+      <div class="field" style="margin-top:8px"><input id="newq" placeholder="Add your own question…" aria-label="Add your own question"><button class="btn btn-sm btn-ghost" id="addq">Add</button></div></section>
+    <section class="section"><h2 class="h2" style="margin-bottom:4px">Preview</h2></section>
+    <div class="doc-preview" id="prev"></div>
+    <section class="section"><button class="btn btn-primary btn-block" id="pdf">${ico('doc')} Export PDF</button>
+      <button class="btn btn-ghost btn-block" id="copy" style="margin-top:8px">Copy summary text</button></section>`);
+  const upd = () => {
+    const sel = C.sel.filter(id => S.caps.some(c => c.id === id));
+    $('#selc', v).textContent = sel.length + ' selected';
+    const cs = sel.map(id => S.caps.find(c => c.id === id));
+    const qs = selectedQs();
+    $('#prev', v).innerHTML = `<span class="eyebrow">Ink Study · Consultation</span><h3>${esc(cs[0] ? cs[0].designName : 'My tattoo idea')}</h3><div style="color:#6b5f50">${new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })} · ${cs.length} capture${cs.length === 1 ? '' : 's'} · ${qs.length} questions</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:12px 0">${cs.slice(0, 8).map(c => `<img src="${c.thumb}" alt="" style="width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:4px">`).join('')}</div>
+      ${C.idea ? `<p style="margin:0 0 8px;font:italic 13px/1.4 var(--serif)">“${esc(C.idea.slice(0, 160))}${C.idea.length > 160 ? '…' : ''}”</p>` : ''}
+      <ol style="margin:0;padding-left:18px">${qs.slice(0, 4).map(q => `<li>${esc(q)}</li>`).join('')}${qs.length > 4 ? `<li style="list-style:none;color:#8a7c6a">+ ${qs.length - 4} more</li>` : ''}</ol>`;
+  };
+  const selectedQs = () => QUESTIONS.filter(q => C.q.includes(q.id)).map(q => q.t).concat(C.custom);
+  $$('.sess input', v).forEach(i => i.onchange = () => { C.sel = i.checked ? C.sel.concat(i.dataset.id) : C.sel.filter(x => x !== i.dataset.id); save(); upd(); });
+  $$('.q input', v).forEach(i => i.onchange = () => { const id = i.dataset.q; if (id[0] === 'c') { if (!i.checked) { C.custom.splice(+id.slice(1), 1); save(); route(); } return; } C.q = i.checked ? C.q.concat(id) : C.q.filter(x => x !== id); save(); upd(); });
+  $('#idea', v).oninput = e => { C.idea = e.target.value; save(); upd(); };
+  $('#notes', v).oninput = e => { C.notes = e.target.value; save(); };
+  $('#addq', v).onclick = () => { const t = $('#newq', v).value.trim(); if (!t) return; C.custom.push(t.slice(0, 200)); save(); route(); };
+  const mk2 = $('#mk2', v); if (mk2) mk2.onclick = async () => { mk2.textContent = 'Rendering…'; await makePair(S.last); route(); };
+  $('#pdf', v).onclick = () => exportPack();
+  $('#copy', v).onclick = async () => {
+    const cs = C.sel.map(id => S.caps.find(c => c.id === id)).filter(Boolean);
+    const txt = `Tattoo consultation — ${cs[0] ? cs[0].designName : ''}\n\nIdea: ${C.idea}\nNotes: ${C.notes}\n\nCaptures:\n${cs.map(c => `• ${c.designName} — ${c.side}, ${lenPair(c.sizeCm[0], c.sizeCm[1])}, ${c.stage}`).join('\n')}\n\nQuestions:\n${selectedQs().map((q, i) => `${i + 1}. ${q}`).join('\n')}\n\n(Illustrative simulation from INK STUDY.)`;
+    try { await navigator.clipboard.writeText(txt); toast('Copied to clipboard'); } catch (e) { toast('Copy failed — select text in the PDF instead'); }
+  };
+  upd();
+  // optional AI-drafted questions when the deployment has a model configured
+  fetch('/api/health').then(r => r.json()).then(h => {
+    if (!h.ai) return; const box = $('#aibox', v); if (!box) return;
+    box.innerHTML = `<button class="link" id="ai">${ico('spark').replace('<svg', '<svg style="width:13px;height:13px;vertical-align:-2px;stroke:currentColor;fill:none"')} Draft with AI</button>`;
+    $('#ai', v).onclick = async () => {
+      const c = S.caps.find(x => C.sel.includes(x.id));
+      box.textContent = 'Drafting…';
+      try {
+        const r = await fetch('/api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task: 'ink-questions', design: c ? c.designName : '', region: c ? c.side : '', size: c ? lenPair(c.sizeCm[0], c.sizeCm[1]) : '', intent: C.idea, concerns: C.notes, scenario: c ? c.stage : '' }) });
+        const j = await r.json(); if (!r.ok) throw new Error(j.error);
+        (j.questions || []).forEach(q => { if (!C.custom.includes(q.text)) C.custom.push(q.text); }); save(); route(); toast('Added AI-drafted questions — edit freely');
+      } catch (e) { box.textContent = 'AI unavailable'; }
+    };
+  }).catch(() => {});
+}
+async function exportPack() {
+  const C = S.consult; const cs = C.sel.map(id => S.caps.find(c => c.id === id)).filter(Boolean);
+  const imgs = await Promise.all(cs.map(async c => (await IDB.get('cap:' + c.id)) || c.thumb));
+  const qs = QUESTIONS.filter(q => C.q.includes(q.id)).map(q => q.t).concat(C.custom);
+  let root = document.getElementById('print-root'); if (!root) { root = document.createElement('div'); root.id = 'print-root'; document.body.appendChild(root); }
+  root.innerHTML = `<div class="pp-head"><div><div style="font:600 8pt Helvetica,Arial;letter-spacing:3px;color:#a8301b">INK STUDY · CONSULTATION PACK</div><h1>${esc(cs[0] ? cs[0].designName : 'My tattoo idea')}</h1></div><div style="text-align:right;font:9pt Helvetica,Arial;color:#555">${new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}<br>${cs.length} capture(s)</div></div>
+    ${C.idea ? `<h2>The idea</h2><p>${esc(C.idea)}</p>` : ''}
+    <h2>Captures</h2><div class="pp-grid">${cs.map((c, i) => `<figure><img src="${imgs[i]}" alt=""><figcaption><b>${esc(c.designName)}</b> — ${esc(c.side)}, ${esc(lenPair(c.sizeCm[0], c.sizeCm[1]))}<br>${esc(c.stage)} · sun ${esc(c.sun)} · skin type ${esc(c.skin)}</figcaption></figure>`).join('')}</div>
+    <h2>Placement &amp; size</h2><table>${cs.map(c => `<tr><td>${esc(c.designName)}</td><td>${esc(c.side)}</td><td>${esc(lenPair(c.sizeCm[0], c.sizeCm[1]))}</td><td>${esc(c.line)} lines</td></tr>`).join('')}</table>
+    <h2>Questions for my artist</h2><ol>${qs.map(q => `<li>${esc(q)}</li>`).join('')}</ol>
+    ${C.notes ? `<h2>Notes</h2><p>${esc(C.notes)}</p>` : ''}
+    <p class="note">Aging images are an illustrative simulation (ink migration, pigment-specific fading, sun, placement and aftercare modifiers). They are not a prediction for any individual. Your artist and dermatologist know your skin.</p>`;
+  document.body.classList.add('printing');
+  const done = () => { document.body.classList.remove('printing'); window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  await Promise.all([...root.querySelectorAll('img')].map(i => i.complete ? 0 : new Promise(r => { i.onload = i.onerror = r; })));
+  window.print();
+  setTimeout(done, 1500);
+}
+
+/* ================= Settings ================= */
+function viewSettings() {
+  const st = S.settings;
+  const v = shell('studio', `<div class="back-row"><a class="icon-btn" href="#/" aria-label="Back">${ico('back')}</a><span class="eyebrow">Settings</span></div>
+    <div class="page-head"><h1 class="display" style="margin-top:8px">Settings</h1></div>
+    <section class="section"><span class="sublab">Default skin tone</span><div class="swatches" role="group" aria-label="Default skin tone" style="justify-content:space-between">${SKINS.map((s, i) => `<button class="swatch" style="width:44px;height:44px;background:${s.hex}" data-i="${i}" aria-pressed="${st.skin === i}" aria-label="Fitzpatrick type ${s.id}">${s.id}</button>`).join('')}</div>
+      <p class="muted small" style="margin-top:8px">Fitzpatrick I–VI. Used by the AR camera, aging previews and the studio.</p></section>
+    <section class="section"><span class="sublab">Preferences</span></section>
+    <div class="list">
+      <div class="li"><span>Units<span class="sub">Tattoo sizes and placement</span></span><div class="seg" style="width:140px" id="units"><button data-v="cm" aria-pressed="${st.units === 'cm'}">cm</button><button data-v="in" aria-pressed="${st.units === 'in'}">in</button></div></div>
+      <div class="li"><span>Hand-held camera motion<span class="sub">${reduceMotion ? 'Off — your system prefers reduced motion' : 'Natural sway in the AR camera'}</span></span><button class="switch" role="switch" id="sw-m" aria-checked="${st.motion && !reduceMotion}" aria-label="Hand-held camera motion" ${reduceMotion ? 'disabled' : ''}></button></div>
+      <div class="li"><span>Body hair<span class="sub">Fine hair on the simulated skin</span></span><button class="switch" role="switch" id="sw-h" aria-checked="${st.hair}" aria-label="Body hair"></button></div>
+    </div>
+    <section class="section"><span class="sublab">About</span></section>
+    <div class="list">
+      <button class="li" id="about"><span>How the aging simulation works<span class="sub">Evidence and limits</span></span>${ico('r').replace('<svg', '<svg style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8"')}</button>
+      <div class="li"><span>Your data<span class="sub">${S.caps.length} captures · ${S.my.length} designs · stored only on this device</span></span></div>
+      <button class="li danger" id="wipe"><span>Delete all my data<span class="sub">Captures, designs, notes and settings</span></span>${ico('trash').replace('<svg', '<svg style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8"')}</button>
+    </div>
+    <p class="foot-note">INK STUDY v2 · Original flash drawn for this app. Aging images are an illustrative simulation — your artist and dermatologist know your skin.</p>`);
+  $$('.swatch', v).forEach(b => b.onclick = () => { st.skin = +b.dataset.i; AR.skin = null; heroURL = null; save(); $$('.swatch', v).forEach(x => x.setAttribute('aria-pressed', x === b)); });
+  $$('#units button', v).forEach(b => b.onclick = () => { st.units = b.dataset.v; save(); $$('#units button', v).forEach(x => x.setAttribute('aria-pressed', x === b)); });
+  $('#sw-m', v).onclick = e => { st.motion = !st.motion; save(); e.currentTarget.setAttribute('aria-checked', st.motion); };
+  $('#sw-h', v).onclick = e => { st.hair = !st.hair; AR.hair = null; heroURL = null; save(); e.currentTarget.setAttribute('aria-checked', st.hair); };
+  $('#about', v).onclick = () => infoModal('How the aging simulation works', `<p>The camera renders a 3D limb with layered skin shading. Your design is wrapped onto the curved surface and aged per pixel:</p><ul style="padding-left:18px;line-height:1.55"><li><b>Healing:</b> day-0 redness, swelling and plasma gloss; a cloudy, peeling phase in weeks 1–2; a settled, slightly lighter look at about a month.</li><li><b>Ink migration:</b> line spread grows with time, so fine lines blur proportionally more than bold lines.</li><li><b>Pigment fading:</b> black is the most stable; yellow, white and pastels fade fastest; reds and oranges moderately; greens and blues in between. Old black may drift faintly blue-green.</li><li><b>Modifiers:</b> sun exposure (the biggest accelerant), placement (hands and outer forearms age faster than calves or backs) and aftercare.</li><li>Many people consider a touch-up after 10–15 years.</li></ul><p class="muted">Rates are illustrative, chosen to match these well-documented trends — not measured from your skin. Your artist and dermatologist know your skin.</p>`);
+  $('#wipe', v).onclick = () => confirmModal('Delete all data?', 'This permanently removes captures, designs, notes and settings from this device.', 'Delete everything', async () => { await IDB.clear(); localStorage.removeItem(KEY); S = defaults(); heroURL = null; rasterCache.clear(); thumbCache.clear(); toast('All data deleted'); location.hash = '#/'; route(); });
+}
+function confirmModal(title, body, cta, fn) {
+  const m = document.createElement('div'); m.className = 'modal'; m.setAttribute('role', 'alertdialog'); m.setAttribute('aria-label', title);
+  m.innerHTML = `<div class="panel"><div class="h2">${esc(title)}</div><p class="muted" style="margin:8px 0 18px">${esc(body)}</p><div style="display:flex;gap:10px"><button class="btn btn-ghost" style="flex:1" data-n>Cancel</button><button class="btn btn-primary" style="flex:1" data-y>${esc(cta)}</button></div></div>`;
+  app.appendChild(m); $('[data-n]', m).focus();
+  m.onclick = e => { if (e.target === m || e.target.closest('[data-n]')) m.remove(); if (e.target.closest('[data-y]')) { m.remove(); fn(); } };
+}
+function infoModal(title, html) {
+  const m = document.createElement('div'); m.className = 'modal'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-label', title);
+  m.innerHTML = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div class="h2">${esc(title)}</div><button class="icon-btn" data-x aria-label="Close">${ico('close')}</button></div><div style="font-size:14px;color:var(--bone-2);margin-top:10px">${html}</div></div>`;
+  app.appendChild(m); $('[data-x]', m).focus();
+  m.onclick = e => { if (e.target === m || e.target.closest('[data-x]')) m.remove(); };
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { const m = $('.modal'); if (m) m.remove(); } });
+
+// load bundled fonts early so canvas lettering is correct
+try { document.fonts && ['40px "Ink Script"', '40px "Ink Blackletter"'].forEach(f => document.fonts.load(f)); } catch (e) {}
+route();
+window.InkApp = { S, makePair, route, IDB, snap };
 })();

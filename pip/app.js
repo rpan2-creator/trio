@@ -1,773 +1,612 @@
-/* PIP — P0 beta. Local-first: pet, actions, memories and chat history live in IndexedDB on this device.
-   Server is only used for (a) the character's AI reply and (b) optional photo analysis the user turns on. */
-(function(){
+/* PIP — core: state, persistence, audio, pixel icons, FX, UI helpers, onboarding.
+   Classic scripts share the global scope, so pages.js and games.js build on these. */
 'use strict';
-const A=window.PIPArt;
-const app=document.getElementById('app');
-const sr=document.getElementById('sr');
-const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const uid=()=>(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));
-const announce=t=>{sr.textContent='';setTimeout(()=>sr.textContent=t,30);};
-const sysReduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
+const E = window.PIPEngine;
+const APP = document.getElementById('app');
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const rand = (a, b) => a + Math.random() * (b - a);
+const choice = a => a[Math.floor(Math.random() * a.length)];
+const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/* ---------------- storage (IndexedDB) ---------------- */
-const SCHEMA=1;
-const DB={
-  db:null,
-  open(){return this.db?Promise.resolve(this.db):new Promise((res,rej)=>{const r=indexedDB.open('pip-beta',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>{this.db=r.result;res(this.db)};r.onerror=()=>rej(r.error);});},
-  async get(k){const db=await this.open();return new Promise((res,rej)=>{const t=db.transaction('kv').objectStore('kv').get(k);t.onsuccess=()=>res(t.result);t.onerror=()=>rej(t.error);});},
-  async put(k,v){const db=await this.open();return new Promise((res,rej)=>{const tx=db.transaction('kv','readwrite');tx.objectStore('kv').put(v,k);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});},
-  async del(k){const db=await this.open();return new Promise((res,rej)=>{const tx=db.transaction('kv','readwrite');tx.objectStore('kv').delete(k);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});},
+/* ============================== STATE ============================== */
+const KEY = 'pip.save.v2';
+const PERSONALITIES = {
+  playful: { name: 'Playful', e: '🎾', d: 'Zoomies & games', likes: 'play' },
+  cuddly: { name: 'Cuddly', e: '🧸', d: 'Loves belly rubs', likes: 'love' },
+  curious: { name: 'Curious', e: '🔍', d: 'Asks lots of questions', likes: 'fun' },
+  sleepy: { name: 'Sleepy', e: '🌙', d: 'Champion napper', likes: 'energy' },
+  cheeky: { name: 'Cheeky', e: '😜', d: 'A little mischief', likes: 'fun' },
+  brave: { name: 'Brave', e: '⭐', d: 'Fearless explorer', likes: 'play' },
 };
-function freshSave(){return {schema_version:SCHEMA,pet:null,memories:[],convo:[],actions:[],stats:{comfort:60,energy:60,changes:[]},games:[],
-  settings:{reduceMotion:sysReduce,sound:false,haptics:true,offerMemories:true,voiceConsent:false},lastExport:null,created:Date.now()};}
-let S={save:freshSave(),saveState:'saved',draft:null,view:'boot',params:{},anim:{state:'idle',until:0,start:0},ai:null};
-async function persist(){
-  S.saveState='saving';paintSave();
-  try{await DB.put('save',S.save);S.saveState='saved';}catch(e){S.saveState='error';}
-  paintSave();return S.saveState==='saved';
+const HABITS = ['Naps in sunbeams', 'Zoomies at night', 'Food-motivated', 'Shy with strangers', 'Lap snuggler', 'Very talkative', 'Steals socks', 'Scared of the vacuum', 'Loves car rides', 'Greets at the door'];
+const NAMES = ['Mochi', 'Pip', 'Biscuit', 'Bean', 'Tofu', 'Pudding', 'Noodle', 'Maple', 'Clover', 'Sprout', 'Waffles', 'Peanut', 'Dumpling', 'Juniper', 'Pickle', 'Comet', 'Marshmallow', 'Basil', 'Sesame', 'Pebble', 'Olive', 'Kiwi', 'Taro', 'Nori', 'Boba', 'Cocoa', 'Ziggy', 'Luna', 'Sunny', 'Fig'];
+const NEEDS = [
+  { k: 'hunger', n: 'Food', c: '#ff9a3c', ic: 'food' },
+  { k: 'fun', n: 'Fun', c: '#ff6f91', ic: 'ball' },
+  { k: 'energy', n: 'Energy', c: '#ffc93c', ic: 'bolt' },
+  { k: 'clean', n: 'Clean', c: '#4fb2ff', ic: 'drop' },
+  { k: 'love', n: 'Love', c: '#f2558a', ic: 'heart' },
+];
+const DECAY = { hunger: 4.5, fun: 5, energy: 3, clean: 2.4, love: 3 }; // points per hour (gentle)
+const FOODS = Object.keys(E.ITEMS).filter(k => E.ITEMS[k].kind === 'food');
+const TOYS = Object.keys(E.ITEMS).filter(k => E.ITEMS[k].kind === 'toy');
+const OUTFITS = [].concat(
+  Object.keys(E.HATS).map(k => ({ id: 'hat:' + k, slot: 'hat', key: k, name: E.HATS[k], price: { party: 0, beanie: 40, cap: 45, tophat: 80, flower: 60, bow: 50, wizard: 90, chef: 70 }[k] })),
+  Object.keys(E.GLASSES).map(k => ({ id: 'glasses:' + k, slot: 'glasses', key: k, name: E.GLASSES[k], price: { round: 40, shades: 55, heart: 65, nerd: 45 }[k] })),
+  Object.keys(E.NECKS).map(k => ({ id: 'neck:' + k, slot: 'neck', key: k, name: E.NECKS[k], price: { scarf: 0, bowtie: 35, bandana: 40, bell: 50 }[k] })));
+const TRICKS = [
+  { id: 'sit', n: 'Sit', e: '🪑', l: '#ffe6cc', lvl: 1 },
+  { id: 'spin', n: 'Spin', e: '🌀', l: '#d8eeff', lvl: 1 },
+  { id: 'jump', n: 'Jump', e: '⬆️', l: '#d3f7e6', lvl: 2 },
+  { id: 'high5', n: 'High-five', e: '✋', l: '#ffd3de', lvl: 3 },
+  { id: 'wave', n: 'Wave', e: '👋', l: '#e7e0ff', lvl: 4 },
+  { id: 'dance', n: 'Dance', e: '💃', l: '#fff1c2', lvl: 6 },
+];
+const QUEST_POOL = [
+  { id: 'pet', t: n => `Give ${n} 5 cuddles`, goal: 5, stat: 'pets', ic: 'heart', r: 30 },
+  { id: 'feed', t: n => `Feed ${n} 3 snacks`, goal: 3, stat: 'feeds', ic: 'food', r: 25 },
+  { id: 'bath', t: () => 'Give a bubble bath', goal: 1, stat: 'baths', ic: 'drop', r: 25 },
+  { id: 'fetch', t: () => 'Play fetch 3 times', goal: 3, stat: 'fetches', ic: 'ball', r: 30 },
+  { id: 'game', t: () => 'Play 2 mini-games', goal: 2, stat: 'games', ic: 'pad', r: 40 },
+  { id: 'trick', t: () => 'Practice tricks 2 times', goal: 2, stat: 'practice', ic: 'medal', r: 35 },
+  { id: 'talk', t: n => `Chat with ${n}`, goal: 2, stat: 'talks', ic: 'talk', r: 25 },
+  { id: 'tickle', t: () => 'Tickle or boop 6 times', goal: 6, stat: 'pokes', ic: 'star', r: 20 },
+  { id: 'dress', t: () => 'Try on an outfit', goal: 1, stat: 'dress', ic: 'hat', r: 20 },
+  { id: 'nap', t: () => 'Tuck in for a nap', goal: 1, stat: 'sleeps', ic: 'moon', r: 20 },
+];
+const ACH = [
+  { id: 'hello', n: 'First hello', d: 'Meet your pet', ic: 'heart', l: '#ffd3de', test: s => true },
+  { id: 'pets50', n: 'Cuddle bug', d: 'Give 50 cuddles', ic: 'heart', l: '#ffd3de', test: s => s.stats.pets >= 50 },
+  { id: 'feed20', n: 'Chef', d: 'Serve 20 snacks', ic: 'food', l: '#ffe6cc', test: s => s.stats.feeds >= 20 },
+  { id: 'bath5', n: 'Squeaky clean', d: 'Give 5 baths', ic: 'drop', l: '#d8eeff', test: s => s.stats.baths >= 5 },
+  { id: 'fetch10', n: 'Good catch', d: 'Play fetch 10 times', ic: 'ball', l: '#ffd3de', test: s => s.stats.fetches >= 10 },
+  { id: 'trick1', n: 'Smarty', d: 'Learn a trick', ic: 'medal', l: '#fff1c2', test: s => Object.values(s.tricks).some(t => t.m >= 100) },
+  { id: 'trick4', n: 'Show-off', d: 'Learn 4 tricks', ic: 'medal', l: '#fff1c2', test: s => Object.values(s.tricks).filter(t => t.m >= 100).length >= 4 },
+  { id: 'lvl5', n: 'Growing up', d: 'Reach level 5', ic: 'star', l: '#e7e0ff', test: s => s.level >= 5 },
+  { id: 'lvl10', n: 'All grown', d: 'Reach level 10', ic: 'star', l: '#e7e0ff', test: s => s.level >= 10 },
+  { id: 'games5', n: 'Gamer', d: 'Play 5 mini-games', ic: 'pad', l: '#d3f7e6', test: s => s.stats.games >= 5 },
+  { id: 'star3', n: 'Superstar', d: 'Get 3 stars in a game', ic: 'star', l: '#fff1c2', test: s => s.stats.threeStars >= 1 },
+  { id: 'decor', n: 'Interior designer', d: 'Place 3 furniture items', ic: 'sofa', l: '#ffe6cc', test: s => s.room.items.length >= 3 },
+  { id: 'dress', n: 'Fashionista', d: 'Own 5 outfits', ic: 'hat', l: '#e7e0ff', test: s => Object.keys(s.inv.outfits).length >= 5 },
+  { id: 'memory', n: 'Remember me', d: 'Save a memory', ic: 'note', l: '#d8eeff', test: s => s.memories.length >= 1 },
+  { id: 'streak3', n: 'Regular', d: '3-day visit streak', ic: 'fire', l: '#ffe6cc', test: s => s.streak.count >= 3 },
+  { id: 'rich', n: 'Piggy bank', d: 'Earn 500 coins total', ic: 'coin', l: '#fff1c2', test: s => s.stats.coinsEarned >= 500 },
+];
+
+let S = null; // the save
+function freshSave(pet) {
+  return {
+    v: 2, created: Date.now(), pet, level: 1, xp: 0, coins: 60,
+    needs: { hunger: 80, fun: 75, energy: 90, clean: 85, love: 70 }, lastTick: Date.now(), lastSeen: Date.now(),
+    inv: { food: { apple: 4, cookie: 2, carrot: 1 }, toys: { ball: 1 }, outfits: { 'hat:party': 1, 'neck:scarf': 1 }, furn: { rug: 1, plant: 1, bed: 1, clock: 1 }, walls: { cream: 1 }, floors: { wood: 1 } },
+    room: { wall: 'cream', floor: 'wood', items: [{ id: 'rug', x: .5, dy: 12 }, { id: 'plant', x: .88, dy: -150 }, { id: 'bed', x: .2, dy: -120 }, { id: 'clock', x: .82, dy: -230 }] },
+    wear: { hat: null, glasses: null, neck: null },
+    tricks: Object.fromEntries(TRICKS.map(t => [t.id, { m: 0 }])),
+    quests: null, streak: { last: today(), count: 1 },
+    stats: { pets: 0, feeds: 0, baths: 0, fetches: 0, sleeps: 0, games: 0, practice: 0, talks: 0, pokes: 0, dress: 0, coinsEarned: 0, threeStars: 0, best: {} },
+    ach: {}, memories: [], convo: [], seenShop: {},
+    settings: { sound: true, rm: false, haptics: true, offerMemories: true },
+  };
 }
-function paintSave(){const el=document.querySelector('[data-save]');if(!el)return;
-  el.className='save'+(S.saveState==='saving'?' pending':S.saveState==='error'?' err':'');
-  el.innerHTML='<i></i>'+(S.saveState==='saving'?'Saving…':S.saveState==='error'?'Not saved — tap to retry':'Saved on this device');}
-const reduce=()=>S.save.settings.reduceMotion;
+function load() { try { const raw = localStorage.getItem(KEY); if (!raw) return null; const s = JSON.parse(raw); if (!s || !s.pet) return null; return migrate(s); } catch (e) { return null; } }
+function migrate(s) { const f = freshSave(s.pet); for (const k of Object.keys(f)) if (s[k] == null) s[k] = f[k]; for (const k of Object.keys(f.stats)) if (s.stats[k] == null) s.stats[k] = f.stats[k]; for (const k of Object.keys(f.inv)) if (!s.inv[k]) s.inv[k] = f.inv[k]; for (const t of TRICKS) if (!s.tricks[t.id]) s.tricks[t.id] = { m: 0 }; return s; }
+let saveT = 0;
+function persist() { clearTimeout(saveT); saveT = setTimeout(persistNow, 250); }
+function persistNow() { if (!S) return true; try { S.lastSeen = Date.now(); localStorage.setItem(KEY, JSON.stringify(S)); return true; } catch (e) { return false; } }
+window.addEventListener('pagehide', persistNow);
+document.addEventListener('visibilitychange', () => { if (document.hidden) persistNow(); else if (S) { tickNeeds(true); } });
 
-/* ---------------- tiny UI helpers ---------------- */
-const ICON={
-  back:'<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
-  close:'<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
-  feed:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16l-1.5 6.5a2 2 0 0 1-2 1.5h-9a2 2 0 0 1-2-1.5z"/><path d="M8 9c0-2 1.5-3 4-3s4 1 4 3"/></svg>',
-  pet:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V6.5a1.5 1.5 0 0 1 3 0V11m0-1V5a1.5 1.5 0 0 1 3 0v5m0 0V6.5a1.5 1.5 0 0 1 3 0V12m0-2.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-1a6 6 0 0 1-5-2.7L4 14.5a1.6 1.6 0 0 1 2.6-1.9L7 13.5"/></svg>',
-  talk:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4 3v-3H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg>',
-  play:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7.5"/><path d="M5 9.5c4 2 10 2 14 0M5 14.5c4-2 10-2 14 0"/></svg>',
-  home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-5h-6v5H5a1 1 0 0 1-1-1z"/></svg>',
-  mem:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 15l4.5-4 4 3.5L15 12l5 4"/><circle cx="15.5" cy="8.8" r="1.3"/></svg>',
-  paw:'<svg viewBox="0 0 24 24" fill="currentColor"><ellipse cx="7" cy="9" rx="1.8" ry="2.4"/><ellipse cx="11" cy="6.6" rx="1.8" ry="2.4"/><ellipse cx="15.5" cy="7.2" rx="1.8" ry="2.4"/><ellipse cx="18.4" cy="11" rx="1.6" ry="2.1"/><path d="M12.5 11.5c3 0 5.5 3.6 5.5 5.8 0 1.8-1.4 2.7-3 2.7-1 0-1.6-.6-2.5-.6s-1.6.6-2.6.6c-1.7 0-2.9-1-2.9-2.6 0-2.3 2.5-5.9 5.5-5.9z"/></svg>',
-  mic:'<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>',
-  send:'<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 12l16-8-6 16-2.5-6.5z"/></svg>',
-  chev:'<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>',
+/* needs: gentle decay, capped while away; never death or punishment */
+function tickNeeds(wake) {
+  if (!S) return;
+  const now = Date.now(); let hrs = (now - S.lastTick) / 3600000; S.lastTick = now;
+  if (hrs <= 0) return;
+  const away = hrs > 0.25;
+  if (away) hrs = Math.min(hrs, 8); // at most ~8h of decay counted while closed
+  for (const k of Object.keys(DECAY)) {
+    let d = DECAY[k] * hrs;
+    if (k === 'energy' && (HOME && HOME.sleeping)) d = -30 * hrs;
+    const floor = away ? 25 : 8; // while away needs never drop below 25
+    if (d > 0) S.needs[k] = Math.max(Math.min(S.needs[k], floor), S.needs[k] - d); else S.needs[k] = clamp(S.needs[k] - d, 0, 100);
+  }
+  if (wake && away && hrs > 1) welcomeBack(hrs);
+}
+function needAvg() { const n = S.needs; return (n.hunger + n.fun + n.energy + n.clean + n.love) / 5; }
+function mood() {
+  const n = S.needs, a = needAvg();
+  if (HOME && HOME.sleeping) return { k: 'sleep', n: 'Dreaming', e: 'moon' };
+  const low = NEEDS.slice().sort((x, y) => n[x.k] - n[y.k])[0];
+  if (a >= 85) return { k: 'ecstatic', n: 'Over the moon', e: 'star' };
+  if (n[low.k] < 30) return { k: 'wish', n: { hunger: 'Snack-curious', fun: 'Wants to play', energy: 'Yawning', clean: 'A bit muddy', love: 'Wants cuddles' }[low.k], e: low.ic, need: low.k };
+  if (a >= 65) return { k: 'happy', n: 'Happy', e: 'heart' };
+  return { k: 'ok', n: 'Content', e: 'heart' };
+}
+function stageFor(lvl) { return lvl >= 10 ? 'adult' : lvl >= 5 ? 'kid' : 'baby'; }
+function xpNeed(l) { return 40 + l * 30; }
+
+/* ============================== AUDIO ============================== */
+let AC = null;
+function ac() { if (!S || !S.settings.sound) return null; try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); return AC; } catch (e) { return null; } }
+function tone(f, d, type, vol, slide, delay) {
+  const a = ac(); if (!a) return; const t = a.currentTime + (delay || 0);
+  const o = a.createOscillator(), g = a.createGain(); o.type = type || 'square'; o.frequency.setValueAtTime(f, t); if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, slide), t + d);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol || .06, t + .01); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  o.connect(g).connect(a.destination); o.start(t); o.stop(t + d + .02);
+}
+function noise(d, vol, hp, delay) { const a = ac(); if (!a) return; const t = a.currentTime + (delay || 0); const b = a.createBuffer(1, a.sampleRate * d, a.sampleRate); const ch = b.getChannelData(0); for (let i = 0; i < ch.length; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / ch.length); const s = a.createBufferSource(); s.buffer = b; const f = a.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = hp || 800; const g = a.createGain(); g.gain.value = vol || .05; s.connect(f).connect(g).connect(a.destination); s.start(t); }
+const SFX = {
+  tap: () => tone(660, .06, 'square', .035, 880),
+  pop: () => tone(520, .09, 'square', .05, 1200),
+  coin: () => { tone(988, .07, 'square', .04); tone(1319, .16, 'square', .04, null, .07); },
+  heart: () => tone(rand(700, 900), .12, 'triangle', .05, 1300),
+  purr: () => { const a = ac(); if (!a) return; for (let i = 0; i < 4; i++) tone(70 + Math.random() * 15, .1, 'sawtooth', .025, 60, i * .09); },
+  chomp: () => { noise(.06, .08, 1500); tone(180, .06, 'square', .04, 120, .02); },
+  yum: () => { tone(660, .08, 'triangle', .05, 990); tone(990, .14, 'triangle', .05, 1320, .09); },
+  bleh: () => tone(300, .25, 'sawtooth', .03, 150),
+  splash: () => noise(.25, .06, 600),
+  bubble: () => tone(rand(900, 1500), .05, 'sine', .05, rand(1600, 2200)),
+  shake: () => { for (let i = 0; i < 6; i++) noise(.04, .05, 2500, i * .06); },
+  boing: () => tone(220, .22, 'sine', .08, 660),
+  throw: () => noise(.15, .04, 2000),
+  bounce: () => tone(300, .07, 'sine', .07, 180),
+  giggle: () => { for (let i = 0; i < 4; i++) tone(900 + i * 80 + Math.random() * 60, .06, 'triangle', .045, 1200, i * .07); },
+  boop: () => tone(880, .1, 'sine', .07, 440),
+  crack: () => { noise(.08, .12, 3000); tone(140, .05, 'square', .05, 90); },
+  hatch: () => { [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, .18, 'square', .045, null, i * .08)); noise(.3, .05, 4000, .05); },
+  levelup: () => { [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, i) => tone(f, .14, 'square', .045, null, i * .09)); },
+  good: () => { tone(784, .08, 'square', .045); tone(1175, .14, 'square', .045, null, .08); },
+  bad: () => tone(200, .2, 'square', .04, 140),
+  tick: () => tone(1200, .03, 'square', .025),
+  zzz: () => tone(220, .5, 'sine', .03, 180),
+  whoosh: () => noise(.2, .04, 1200),
+  sparkle: () => { for (let i = 0; i < 3; i++) tone(1500 + i * 400, .08, 'sine', .035, null, i * .05); },
+  buy: () => { tone(784, .06, 'square', .04); tone(988, .06, 'square', .04, null, .06); tone(1568, .18, 'square', .04, null, .12); },
 };
-function toast(t){document.querySelectorAll('.toast').forEach(x=>x.remove());const d=document.createElement('div');d.className='toast';d.setAttribute('role','status');d.textContent=t;app.appendChild(d);setTimeout(()=>d.remove(),3200);}
-function vib(ms){if(S.save.settings.haptics&&navigator.vibrate)try{navigator.vibrate(ms)}catch(e){}}
-let actx=null;function blip(f){if(!S.save.settings.sound)return;try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.type='square';o.frequency.value=f||660;g.gain.value=.04;o.connect(g);g.connect(actx.destination);o.start();g.gain.exponentialRampToValueAtTime(.0001,actx.currentTime+.12);o.stop(actx.currentTime+.13);}catch(e){}}
+function sfx(n) { try { SFX[n] && SFX[n](); } catch (e) { } }
+function buzz(p) { if (S && S.settings.haptics && navigator.vibrate) try { navigator.vibrate(p || 12); } catch (e) { } }
 
-function confirmDialog({title,body,verb,danger}){
-  return new Promise(res=>{
-    const prev=document.activeElement;
-    const wrap=document.createElement('div');
-    wrap.innerHTML=`<div class="scrim"></div><div class="sheet" role="alertdialog" aria-modal="true" aria-labelledby="cd-t" aria-describedby="cd-b"><div class="grab"></div>
-      <div class="sh-body" style="padding-top:14px"><h2 id="cd-t">${esc(title)}</h2><p id="cd-b" class="muted" style="margin-top:8px">${esc(body)}</p></div>
-      <div class="sh-foot stack"><button class="btn block ${danger?'danger solid':'primary'}" data-ok>${esc(verb)}</button><button class="btn block ghost" data-no>Cancel</button></div></div>`;
-    app.appendChild(wrap);
-    const done=v=>{wrap.remove();prev&&prev.focus&&prev.focus();res(v);};
-    wrap.querySelector('[data-ok]').onclick=()=>done(true);wrap.querySelector('[data-no]').onclick=()=>done(false);wrap.querySelector('.scrim').onclick=()=>done(false);
-    wrap.querySelector('[data-no]').focus();
-    wrap.addEventListener('keydown',e=>{if(e.key==='Escape')done(false);});
+/* ============================== PIXEL ICONS ============================== */
+const ICONS = {
+  coin: P => { P.ell(8, 8, 7, 7, '#ffc93c'); P.ell(8, 8, 4.5, 4.5, '#ffdb6e', 'in', { shade: false }); P.rect(7, 5, 2, 6, '#e09a12', 'm'); P.px(4, 4, '#fff6c0', 'hl'); },
+  heart: P => P.stamp(1, 2, ['.RRR...RRR.', 'RRWRR.RRRRR', 'RWRRRRRRRRR', 'RRRRRRRRRRR', '.RRRRRRRRR.', '..RRRRRRR..', '...RRRRR...', '....RRR....', '.....R.....'].map(r => ' ' + r), { R: '#ff5f8f', W: '#ffd0de' }, 'h'),
+  star: P => { const pts = []; for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? 3.4 : 7.6; pts.push([8 + Math.cos(a) * r, 8.6 + Math.sin(a) * r]); } P.poly(pts, '#ffc93c'); P.px(6, 6, '#fff6c0', 'h'); },
+  bolt: P => P.poly([[9, 1], [3, 9], [7.5, 9], [6, 15], [13, 6], [8.5, 6], [10.5, 1]], '#ffc93c'),
+  drop: P => { P.ell(8, 10, 5, 5, '#4fb2ff'); P.poly([[3.6, 9], [8, 1], [12.4, 9]], '#4fb2ff', 'tp'); P.px(6, 9, '#d8eeff', 'h'); P.px(6, 10, '#d8eeff', 'h2'); },
+  food: P => { P.ell(8, 9, 5, 3.5, '#ff9a3c', 'fd'); P.ell(5, 7, 2, 2, '#ff5a5a', 'a'); P.ell(11, 7, 2, 2, '#79c96b', 'b'); P.rect(1, 10, 14, 1, '#5aa6e8', 'rim'); P.ell(8, 11, 6.5, 3.5, '#86c5ff', 'bowl', { clip: (x, y) => y > 10 }); },
+  ball: P => P.ell(8, 8, 6.5, 6.5, (x, y) => (Math.abs(y - 8) < 1.3 ? '#ffffff' : '#ff5a6a')),
+  home: P => { P.poly([[1, 8], [8, 1.5], [15, 8]], '#ff6f91'); P.rect(3, 8, 10, 7, '#fff1df', 'w'); P.rect(7, 10, 3, 5, '#a8744f', 'd'); P.rect(11, 3, 2, 4, '#c9925c', 'ch'); },
+  pad: P => { P.ell(8, 9, 7.5, 5, '#8b6cff', 'p', { n: 3 }); P.rect(3, 8, 4, 1, '#fff', 'd1'); P.rect(4, 7, 1, 3, '#fff', 'd2'); P.px(11, 7, '#ffc93c', 'b1'); P.px(12, 9, '#ff6f91', 'b2'); P.px(10, 9, '#33cf8f', 'b3'); },
+  bag: P => { P.rect(2, 6, 12, 9, '#ffc93c'); P.shape((x, y) => { const d = Math.hypot(x - 8, y - 6); return d <= 3.6 && d >= 2.4 && y < 6.5; }, 4, 1, 12, 7, '#e09a12', 'hd'); P.rect(2, 6, 12, 2, '#ff9a3c', 'tp'); P.ell(8, 11, 1.6, 1.6, '#fff', 's'); },
+  book: P => { P.rect(2, 2, 12, 13, '#ff6f91'); P.rect(4, 3, 9, 11, '#fff6ea', 'pg'); P.rect(2, 2, 2, 13, '#d94c72', 'sp'); P.stamp(6, 6, ['.R.R.', 'RRRRR', '.RRR.', '..R..'], { R: '#ff5f8f' }); },
+  bath: P => { P.ell(8, 10, 7, 4.5, '#86c5ff', 'tub', { clip: (x, y) => y > 8 }); P.rect(1, 8, 14, 2, '#e6f4ff', 'rim'); P.ell(5, 6, 2.2, 2.2, '#e6f7ff', 'b1', { shade: false }); P.ell(9, 4.5, 2.8, 2.8, '#e6f7ff', 'b2', { shade: false }); P.ell(12, 6.5, 1.6, 1.6, '#e6f7ff', 'b3', { shade: false }); P.rect(4, 14, 2, 2, '#5aa6e8', 'l1'); P.rect(11, 14, 2, 2, '#5aa6e8', 'l2'); },
+  moon: P => { P.ell(8, 8, 6.5, 6.5, '#ffd65a'); P.ell(11, 6, 5, 5, null, 'cut'); P.recolor((x, y) => Math.hypot(x - 11, y - 6) < 5, null); P.px(12, 12, '#fff', 'z'); },
+  medal: P => { P.poly([[4, 1], [7, 1], [9, 7], [6, 7]], '#4fb2ff', 'r1'); P.poly([[12, 1], [9, 1], [7, 7], [10, 7]], '#ff6f91', 'r2'); P.ell(8, 10.5, 4.6, 4.6, '#ffc93c'); P.px(8, 10, '#fff6c0', 'h'); },
+  hat: P => { P.poly([[3, 13], [13, 13], [8.5, 1]], (x, y) => (Math.floor(y) % 4 < 2 ? '#ff6fa3' : '#ffd23f')); P.ell(8.5, 1.5, 1.8, 1.8, '#7fd6ff', 'p'); P.rect(2, 13, 12, 2, '#8b6cff', 'b'); },
+  talk: P => { P.ell(8, 7, 7, 5.5, '#ffffff'); P.poly([[4, 10], [3, 15], [8, 11]], '#ffffff', 't'); P.px(5, 7, '#3a2a5a', 'd1'); P.px(8, 7, '#3a2a5a', 'd2'); P.px(11, 7, '#3a2a5a', 'd3'); },
+  camera: P => { P.rect(1, 4, 14, 10, '#4a4a6a'); P.rect(4, 2, 5, 3, '#4a4a6a', 't'); P.ell(8, 9, 3.6, 3.6, '#86c5ff', 'l'); P.ell(8, 9, 1.5, 1.5, '#2b3348', 'p', { shade: false }); P.px(12, 6, '#ff6f91', 'r'); },
+  sofa: P => { P.rect(2, 4, 12, 6, '#ff9a3c'); P.rect(1, 8, 14, 5, '#ffb36b', 's'); P.rect(1, 7, 3, 6, '#e06f12', 'a1'); P.rect(12, 7, 3, 6, '#e06f12', 'a2'); P.rect(2, 13, 2, 2, '#8b5a3c', 'l1'); P.rect(12, 13, 2, 2, '#8b5a3c', 'l2'); },
+  note: P => { P.rect(3, 1, 10, 14, '#fff6ea'); P.rect(3, 1, 10, 3, '#4fb2ff', 't'); for (const y of [6, 8, 10, 12]) P.rect(5, y, 6, 1, '#c9b8e0', 'l' + y); },
+  trophy: P => { P.ell(8, 5, 5, 5, '#ffc93c', 'c', { clip: (x, y) => y > 1 }); P.rect(3, 1, 10, 3, '#ffc93c', 't'); P.rect(7, 9, 2, 3, '#e09a12', 'st'); P.rect(4, 12, 8, 3, '#a8744f', 'b'); P.px(6, 4, '#fff6c0', 'h'); },
+  fire: P => { P.ell(8, 10, 5.5, 5, '#ff6a3c'); P.poly([[3, 9], [6, 1], [8, 5], [11, 2], [13, 9]], '#ff6a3c', 'f'); P.ell(8, 11, 3, 3, '#ffc93c', 'in'); },
+  gear: P => { for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; P.ell(8 + Math.cos(a) * 6, 8 + Math.sin(a) * 6, 1.7, 1.7, '#9a8cb4', 't' + i); } P.ell(8, 8, 5.5, 5.5, '#9a8cb4'); P.ell(8, 8, 2.2, 2.2, '#fff6ea', 'h', { shade: false }); },
+  quest: P => { P.rect(2, 3, 12, 11, '#fff1c2'); P.rect(1, 2, 14, 2, '#e09a12', 't'); P.rect(1, 13, 14, 2, '#e09a12', 'b'); P.stamp(4, 6, ['......G', '.....GG', 'G...GG.', 'GG.GG..', '.GGG...', '..G....'], { G: '#33cf8f' }); },
+  lock: P => { P.shape((x, y) => { const d = Math.hypot(x - 8, y - 7); return d <= 4.4 && d >= 2.6 && y < 7.5; }, 3, 2, 13, 8, '#9a8cb4', 's'); P.rect(3, 7, 10, 8, '#ffc93c', 'b'); P.rect(7, 10, 2, 3, '#8a5a00', 'k'); },
+  egg: P => { P.ell(8, 9, 5.5, 6.8, '#fff6ea'); P.ell(6, 7, 1.5, 1.5, '#ff8fb1', 's1'); P.ell(10, 11, 1.6, 1.6, '#86c5ff', 's2'); P.ell(10.5, 5, 1, 1, '#ffc93c', 's3'); },
+  brush: P => { P.line(3, 13, 10, 6, 1.4, '#a8744f', 'h'); P.ell(12, 4, 3.2, 3.2, '#ff6f91', 'b'); P.px(11, 3, '#ffd0de', 'hl'); },
+  paw: P => { P.ell(8, 11, 4, 3.3, '#ff8fb1'); P.ell(3.5, 6.5, 1.8, 2.2, '#ff8fb1', 't1'); P.ell(6.5, 3.6, 1.8, 2.2, '#ff8fb1', 't2'); P.ell(9.8, 3.6, 1.8, 2.2, '#ff8fb1', 't3'); P.ell(12.6, 6.5, 1.8, 2.2, '#ff8fb1', 't4'); },
+  music: P => { P.rect(6, 2, 2, 10, '#8b6cff'); P.rect(6, 2, 7, 2, '#8b6cff', 't'); P.rect(11, 2, 2, 8, '#8b6cff', 'r'); P.ell(5, 12, 2.6, 2, '#8b6cff', 'a'); P.ell(10, 10, 2.6, 2, '#8b6cff', 'b'); },
+  gift: P => { P.rect(2, 6, 12, 9, '#ff6f91'); P.rect(1, 4, 14, 3, '#ff8fb1', 'lid'); P.rect(7, 4, 2, 11, '#ffc93c', 'rb'); P.ell(5.5, 3, 2.2, 1.6, '#ffc93c', 'b1'); P.ell(10.5, 3, 2.2, 1.6, '#ffc93c', 'b2'); },
+};
+const ICACHE = {};
+function icon(n) { if (ICACHE[n]) return ICACHE[n]; const c = E.paint(16, 16, ICONS[n] || ICONS.star); const big = document.createElement('canvas'); big.width = 64; big.height = 64; const x = big.getContext('2d'); x.imageSmoothingEnabled = false; x.drawImage(c, 0, 0, 64, 64); return (ICACHE[n] = big.toDataURL()); }
+const ic = (n, alt, cls) => `<img src="${icon(n)}" alt="${esc(alt || '')}" class="pxi ${cls || ''}" ${alt ? '' : 'aria-hidden="true"'}>`;
+const IURL = {};
+function itemURL(id, scale) { const k = id + (scale || 3); if (IURL[k]) return IURL[k]; const c = E.itemCanvas(id); const s = scale || 3; const b = document.createElement('canvas'); b.width = c.width * s; b.height = c.height * s; const x = b.getContext('2d'); x.imageSmoothingEnabled = false; x.drawImage(c, 0, 0, b.width, b.height); return (IURL[k] = b.toDataURL()); }
+function outfitURL(o) {
+  const k = 'o:' + o.id; if (IURL[k]) return IURL[k];
+  // render the outfit on an invisible "mannequin" (only the outfit pixels survive)
+  const g = { body: 'chibi', head: 'round', ears: 'none', tail: 'none', wings: 'none', pattern: 'none', eyes: 'dot', mouth: 'smile', extra: 'none', hair: 'none', colors: { base: '#f3ecff', belly: '#f3ecff' }, cheeks: false };
+  const c = E.renderPet(g, { outfit: { [o.slot]: o.key }, eyes: o.slot === 'glasses' ? 'blink' : 'open' }, 1);
+  const crop = { hat: [12, 0, 40, 30], glasses: [14, 18, 36, 20], neck: [14, 34, 36, 22] }[o.slot];
+  const b = document.createElement('canvas'); b.width = crop[2] * 3; b.height = crop[3] * 3; const x = b.getContext('2d'); x.imageSmoothingEnabled = false; x.drawImage(c, crop[0], crop[1], crop[2], crop[3], 0, 0, b.width, b.height);
+  return (IURL[k] = b.toDataURL());
+}
+const SVG = {
+  x: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>',
+  back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
+  dice: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="16" cy="16" r="1.2" fill="currentColor"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg>',
+  mic: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg>',
+  send: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-8-6 16-3-7z"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
+};
+
+/* ============================== FX (screen-space particles) ============================== */
+const FX = { cv: null, ctx: null, parts: [], raf: 0 };
+function fxEnsure() {
+  if (FX.cv && FX.cv.isConnected) return;
+  FX.cv = document.createElement('canvas'); FX.cv.className = 'fx'; FX.cv.setAttribute('aria-hidden', 'true'); APP.appendChild(FX.cv); FX.ctx = FX.cv.getContext('2d'); fxResize();
+}
+function fxResize() { if (!FX.cv) return; const r = APP.getBoundingClientRect(); const d = Math.min(2, window.devicePixelRatio || 1); FX.cv.width = APP.clientWidth * d; FX.cv.height = APP.clientHeight * d; FX.d = d; }
+window.addEventListener('resize', fxResize);
+function appXY(cx, cy) { const r = APP.getBoundingClientRect(); const s = r.width / APP.clientWidth; return [(cx - r.left) / s, (cy - r.top) / s]; }
+function elCenter(el) { const r = el.getBoundingClientRect(); return appXY(r.left + r.width / 2, r.top + r.height / 2); }
+const CONF_COLS = ['#ff6f91', '#ffc93c', '#33cf8f', '#4fb2ff', '#8b6cff', '#ff9a3c', '#ffffff'];
+function confetti(x, y, n, spread) {
+  if (S && S.settings.rm) n = Math.min(n, 12);
+  fxEnsure(); const W = APP.clientWidth;
+  for (let i = 0; i < n; i++) { const a = rand(-Math.PI * .95, -Math.PI * .05), v = rand(4, 11) * (spread || 1); FX.parts.push({ t: 'conf', x: x == null ? rand(0, W) : x, y: y == null ? -10 : y, vx: Math.cos(a) * v, vy: y == null ? rand(1, 4) : Math.sin(a) * v, w: rand(5, 9), h: rand(8, 13), r: rand(0, 6), vr: rand(-.3, .3), c: choice(CONF_COLS), life: rand(90, 150) }); }
+  fxRun();
+}
+function burst(x, y, kind, n, o) {
+  fxEnsure(); o = o || {};
+  for (let i = 0; i < n; i++) { const a = o.up ? rand(-Math.PI * .85, -Math.PI * .15) : rand(0, Math.PI * 2), v = rand(o.vmin || 1.5, o.vmax || 5); FX.parts.push({ t: 'spr', s: kind, x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - (o.lift || 0), g: o.g == null ? .12 : o.g, life: rand(40, 70), max: 70, sc: o.sc || 3, tint: o.tint }); }
+  fxRun();
+}
+function fxRun() {
+  if (FX.raf) return;
+  const step = () => {
+    const c = FX.ctx; if (!c) { FX.raf = 0; return; } const d = FX.d || 1;
+    c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, FX.cv.width, FX.cv.height); c.setTransform(d, 0, 0, d, 0, 0); c.imageSmoothingEnabled = false;
+    FX.parts = FX.parts.filter(p => p.life > 0);
+    for (const p of FX.parts) {
+      p.life--; p.x += p.vx; p.y += p.vy;
+      if (p.t === 'conf') { p.vy += .18; p.vx *= .985; p.vy *= .99; p.r += p.vr; c.save(); c.translate(p.x, p.y); c.rotate(p.r); c.scale(1, Math.cos(p.life * .2)); c.fillStyle = p.c; c.globalAlpha = Math.min(1, p.life / 30); c.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); c.restore(); }
+      else { p.vy += p.g; p.vx *= .97; const sp = E.sprite(p.s, 1, p.tint); const a = Math.min(1, p.life / 25); c.globalAlpha = a; const sc = p.sc * (p.life > p.max - 8 ? (p.max - p.life) / 8 : 1); c.drawImage(sp, Math.round(p.x - sp.width * sc / 2), Math.round(p.y - sp.height * sc / 2), sp.width * sc, sp.height * sc); c.globalAlpha = 1; }
+    }
+    if (FX.parts.length) FX.raf = requestAnimationFrame(step); else { FX.raf = 0; c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, FX.cv.width, FX.cv.height); }
+  };
+  FX.raf = requestAnimationFrame(step);
+}
+function floatText(x, y, txt, color) { const d = document.createElement('div'); d.className = 'ftxt'; d.style.left = x + 'px'; d.style.top = y + 'px'; if (color) d.style.setProperty('--c', color); d.textContent = txt; APP.appendChild(d); setTimeout(() => d.remove(), 1250); }
+function flyCoins(x, y, n) {
+  const pill = $('#coinPill'); if (!pill) return; const [tx, ty] = elCenter(pill);
+  for (let i = 0; i < Math.min(n, 10); i++) {
+    const im = document.createElement('img'); im.src = icon('coin'); im.className = 'coinfly pxi'; im.style.left = (x - 13) + 'px'; im.style.top = (y - 13) + 'px'; APP.appendChild(im);
+    const dx = rand(-40, 40), dy = rand(-50, -10);
+    im.animate([{ transform: 'translate(0,0) scale(.5)' }, { transform: `translate(${dx}px,${dy}px) scale(1.2)`, offset: .35 }, { transform: `translate(${tx - x}px,${ty - y}px) scale(.7)` }], { duration: 700 + i * 60, easing: 'cubic-bezier(.5,0,.6,1)' }).onfinish = () => { im.remove(); if (i === 0) { sfx('coin'); pill.classList.remove('bump'); void pill.offsetWidth; pill.classList.add('bump'); } };
+  }
+}
+
+/* ============================== UI HELPERS ============================== */
+function say(msg) { const sr = document.getElementById('sr'); if (sr) { sr.textContent = ''; setTimeout(() => sr.textContent = msg, 30); } }
+let toastT = 0;
+function toast(msg, iconName) { $$('.toast', APP).forEach(t => t.remove()); const t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); t.innerHTML = (iconName ? ic(iconName) : '') + '<span>' + esc(msg) + '</span>'; APP.appendChild(t); clearTimeout(toastT); toastT = setTimeout(() => t.remove(), 2600); }
+function petCanvas(st, scale, g) { const c = E.renderPet(g || S.pet.genome, Object.assign({ stage: S ? stageFor(S.level) : 'baby', outfit: S ? S.wear : {} }, st || {}), 1); const b = document.createElement('canvas'); b.width = 64 * (scale || 4); b.height = 64 * (scale || 4); b.className = 'px'; const x = b.getContext('2d'); x.imageSmoothingEnabled = false; x.drawImage(c, 0, 0, b.width, b.height); return b; }
+function petURL(st, scale, g) { return petCanvas(st, scale, g).toDataURL(); }
+function sheet(html, o) {
+  o = o || {};
+  const ov = document.createElement('div'); ov.className = 'ov'; ov.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(o.label || '')}"><div class="grab" aria-hidden="true"></div>${html}</div>`;
+  APP.appendChild(ov); const prev = document.activeElement;
+  const close = () => { if (ov.classList.contains('closing')) return; ov.classList.add('closing'); setTimeout(() => { ov.remove(); o.onClose && o.onClose(); if (prev && prev.focus && prev.isConnected) prev.focus(); }, 190); };
+  ov.addEventListener('click', e => { if (e.target === ov) close(); });
+  ov.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
+  $$('[data-close]', ov).forEach(b => b.onclick = () => { sfx('tap'); close(); });
+  if (o.height) $('.sheet', ov).style.height = o.height;
+  setTimeout(() => { const f = $('[autofocus]', ov) || $('.x', ov); f && f.focus(); }, 60);
+  ov.close = close; return ov;
+}
+const sheetHead = (t, extra) => `<div class="sheet-h"><h2>${t}</h2>${extra || ''}<button class="x" data-close aria-label="Close">${SVG.x}</button></div>`;
+function modal(html, o) {
+  o = o || {};
+  const ov = document.createElement('div'); ov.className = 'ov modal-ov'; ov.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="${esc(o.label || '')}">${html}</div>`;
+  APP.appendChild(ov); const close = () => { ov.classList.add('closing'); setTimeout(() => { ov.remove(); o.onClose && o.onClose(); }, 190); };
+  if (o.dismiss !== false) ov.addEventListener('click', e => { if (e.target === ov) close(); });
+  ov.addEventListener('keydown', e => { if (e.key === 'Escape' && o.dismiss !== false) close(); });
+  $$('[data-close]', ov).forEach(b => b.onclick = () => { sfx('tap'); close(); });
+  setTimeout(() => { const f = $('.btn', ov); f && f.focus(); }, 80);
+  ov.close = close; return ov;
+}
+function confirmBox(title, text, okLabel, danger) {
+  return new Promise(res => { const m = modal(`<h2>${esc(title)}</h2><p>${esc(text)}</p><div class="btns"><button class="btn ${danger ? 'btn-danger' : 'btn-mint'}" data-ok>${esc(okLabel || 'OK')}</button><button class="btn btn-white" data-close>Cancel</button></div>`, { onClose: () => res(false) }); $('[data-ok]', m).onclick = () => { res(true); m.querySelector('.modal').remove(); m.remove(); }; });
+}
+// chunky button press feedback for every .btn
+APP.addEventListener('pointerdown', e => { const b = e.target.closest('.btn,.iconbtn,.dock-btn,.tab,.opt,.chip,.sitem,.game-card,.path-card,.titem,.pill,.need,.tagpill'); if (b && !b.disabled) { buzz(6); } }, { passive: true });
+
+/* ============================== PROGRESSION ============================== */
+function addCoins(n, x, y) { S.coins += n; S.stats.coinsEarned += n; if (x != null) flyCoins(x, y, Math.ceil(n / 5)); else bumpHud(); checkAch(); persist(); }
+function addXP(n, x, y) {
+  if (!S) return; S.xp += n; if (x != null) floatText(x, y, '+' + n + ' XP', '#6646e0');
+  let leveled = false; const before = stageFor(S.level);
+  while (S.xp >= xpNeed(S.level)) { S.xp -= xpNeed(S.level); S.level++; leveled = true; }
+  persist(); updateHud();
+  if (leveled) setTimeout(() => levelUp(before !== stageFor(S.level)), 500);
+  checkAch();
+}
+function bumpNeed(k, n) { S.needs[k] = clamp(S.needs[k] + n, 0, 100); updateHud(); persist(); }
+function stat(k, n) { S.stats[k] = (S.stats[k] || 0) + (n || 1); questProgress(k); checkAch(); persist(); }
+function levelUp(evolved) {
+  sfx('levelup'); confetti(null, null, 90); buzz([20, 40, 20]);
+  const st = stageFor(S.level); const reward = 20 + S.level * 5;
+  const unlocked = TRICKS.filter(t => t.lvl === S.level).map(t => t.n);
+  const m = modal(`<div class="ribbon">${evolved ? 'EVOLVED!' : 'LEVEL UP!'}</div><div class="art"><div class="rays" aria-hidden="true"></div></div>
+    <h2>${evolved ? esc(S.pet.name) + ' grew into a ' + (st === 'kid' ? 'kid' : 'grown-up') + '!' : 'Level ' + S.level + '!'}</h2>
+    <p>${evolved ? 'Look how much they\'ve grown. Same goofball, new look.' : esc(S.pet.name) + ' is getting stronger, smarter and even more fond of you.'}${unlocked.length ? '<br><b>New trick unlocked: ' + unlocked.join(', ') + '</b>' : ''}</p>
+    <div class="rewards"><div class="reward">${ic('coin')} +${reward}</div></div>
+    <div class="btns"><button class="btn btn-yellow btn-lg" data-close>Yay!</button></div>`, { label: 'Level up', onClose: () => { addCoins(reward); } });
+  const art = $('.art', m); const c = petCanvas({ eyes: 'happy', mouth: 'open', arm: 'both' }, 3); art.appendChild(c);
+}
+/* quests */
+function ensureQuests() {
+  const d = today();
+  if (!S.quests || S.quests.day !== d) {
+    const r = E.rng(parseInt(d.replace(/-/g, ''), 10) + (S.created % 997));
+    const pool = QUEST_POOL.slice(); const list = [];
+    while (list.length < 3) { const q = pool.splice(Math.floor(r() * pool.length), 1)[0]; list.push({ id: q.id, prog: 0, claimed: false }); }
+    S.quests = { day: d, list, bonus: false };
+    // streak
+    if (S.streak.last !== d) { const y = new Date(Date.now() - 864e5); const yd = y.getFullYear() + '-' + String(y.getMonth() + 1).padStart(2, '0') + '-' + String(y.getDate()).padStart(2, '0'); S.streak.count = S.streak.last === yd ? S.streak.count + 1 : 1; S.streak.last = d; }
+    persist();
+  }
+}
+function questDef(id) { return QUEST_POOL.find(q => q.id === id); }
+function questProgress(statKey) {
+  if (!S.quests) return; let changed = false;
+  for (const q of S.quests.list) { const def = questDef(q.id); if (def.stat === statKey && q.prog < def.goal) { q.prog++; changed = true; if (q.prog >= def.goal) { setTimeout(() => toast('Quest complete! Claim it in Play', 'quest'), 300); sfx('good'); } } }
+  if (changed) { persist(); updateBadges(); }
+}
+function questsReady() { return S.quests ? S.quests.list.filter(q => !q.claimed && q.prog >= questDef(q.id).goal).length : 0; }
+/* achievements */
+function checkAch() {
+  if (!S) return;
+  for (const a of ACH) if (!S.ach[a.id] && a.test(S)) { S.ach[a.id] = Date.now(); setTimeout(() => { sfx('sparkle'); toast('Sticker earned: ' + a.n, a.ic); updateBadges(); }, 900); }
+}
+
+/* ============================== WELCOME BACK ============================== */
+function welcomeBack(hrs) {
+  const n = S.pet.name; const h = Math.round(hrs);
+  const lines = [`${n} kept your spot warm while you were away!`, `${n} did a happy wiggle the second you opened the app.`, `${n} found a sunbeam and saved you half of it.`, `${n} missed you — and is so glad you're back!`];
+  const gift = 10 + Math.min(30, h * 3);
+  setTimeout(() => {
+    const m = modal(`<div class="ribbon">WELCOME BACK!</div><div class="art"><div class="rays" aria-hidden="true"></div></div><h2>Hi again, ${esc(S.pet.addressAs || 'friend')}!</h2><p>${esc(choice(lines))} Nothing bad happens while you're gone — come back whenever life allows.</p><div class="rewards"><div class="reward">${ic('coin')} +${gift}</div></div><div class="btns"><button class="btn btn-mint btn-lg" data-close>Hello, ${esc(n)}!</button></div>`, { label: 'Welcome back', onClose: () => { const [x, y] = [APP.clientWidth / 2, APP.clientHeight / 2]; addCoins(gift, x, y); HOME && HOME.react('happy'); } });
+    $('.art', m).appendChild(petCanvas({ eyes: 'happy', mouth: 'open', arm: 'raise' }, 3));
+  }, 600);
+}
+
+/* ============================== ONBOARDING ============================== */
+const OB = { path: null, genome: null, rarity: null, name: '', personality: 'playful', addressAs: '', habits: [], bio: '', step: 0 };
+function screen(cls, html) { $$('.scr', APP).forEach(s => s.remove()); $$('.ov,.toast,.ftxt,.game', APP).forEach(s => s.remove()); const d = document.createElement('div'); d.className = 'scr scr-enter ' + cls; d.innerHTML = html; APP.prepend(d); return d; }
+function obBG(scr, night) {
+  const cv = document.createElement('canvas'); cv.className = 'ob-bg'; const W = Math.ceil(APP.clientWidth / 4), H = Math.ceil(APP.clientHeight / 4); cv.width = W; cv.height = H; const c = cv.getContext('2d');
+  // clouds + rolling hills + flowers
+  const cl = (x, y, w) => { c.fillStyle = '#ffffff'; c.fillRect(x, y, w, 4); c.fillRect(x + 3, y - 3, w - 8, 3); c.fillRect(x + 6, y - 5, w - 16, 2); c.fillStyle = '#e6f4ff'; c.fillRect(x, y + 3, w, 1); };
+  cl(6, 30, 26); cl(W - 40, 20, 30); cl(W * .45, 48, 20);
+  for (let x = 0; x < W; x++) { const h = Math.round(H * .78 + Math.sin(x / 13) * 5 + Math.sin(x / 5) * 1.2); c.fillStyle = '#a7e08a'; c.fillRect(x, h, 1, H - h); c.fillStyle = '#c4ef9e'; c.fillRect(x, h, 1, 1); }
+  for (let x = 0; x < W; x++) { const h = Math.round(H * .86 + Math.sin(x / 9 + 2) * 3); c.fillStyle = '#8fd17a'; c.fillRect(x, h, 1, H - h); c.fillStyle = '#b4e892'; c.fillRect(x, h, 1, 1); }
+  for (let i = 0; i < 14; i++) { const x = (i * 29 + 7) % W, y = Math.round(H * .9 + (i * 13) % 8); c.fillStyle = ['#ff8fb1', '#ffd23f', '#ffffff'][i % 3]; c.fillRect(x, y, 1, 1); c.fillRect(x - 1, y + 1, 3, 1); c.fillRect(x, y + 2, 1, 1); }
+  scr.prepend(cv);
+}
+function obTop(step, back) { return `<div class="ob-top">${back ? `<button class="iconbtn" data-back aria-label="Back">${SVG.back}</button>` : '<span style="width:44px"></span>'}<div class="ob-step" aria-label="Step ${step} of 4">${[1, 2, 3, 4].map(i => `<i class="${i < step ? 'done' : i === step ? 'on' : ''}"></i>`).join('')}</div><span style="width:44px"></span></div>`; }
+
+function obWelcome() {
+  window.Frame && Frame.tone('dark');
+  const s = screen('ob', `<div class="ob-inner"><div style="height:30px"></div><div class="logo" aria-label="PIP"><span>P</span><span>I</span><span>P</span></div>
+    <p class="tagline">A tiny pixel friend who's<br>always happy to see you.</p>
+    <div class="parade" aria-hidden="true"></div>
+    <div class="ob-foot"><button class="btn btn-lg btn-block" data-go>Let's begin!</button><button class="linkbtn" data-restore>Restore from a backup file</button></div></div>`);
+  obBG(s);
+  const par = $('.parade', s); const ids = ['cat', 'dragon', 'bunny', 'axolotl', 'frog', 'penguin', 'fox', 'slime', 'panda', 'capybara', 'owl', 'unicorn'];
+  const pickIds = ids.sort(() => Math.random() - .5).slice(0, 5);
+  const W = APP.clientWidth - 44;
+  pickIds.forEach((id, i) => { const c = petCanvas({ eyes: i === 2 ? 'happy' : 'open' }, 2, E.presetGenome(id, Math.floor(Math.random() * 3))); c.style.width = c.style.height = (i === 2 ? 160 : 112) + 'px'; const big = i === 2; c.style.left = (big ? W / 2 - 80 : [0, W * .2, 0, W * .62, W * .8][i] - 10) + 'px'; c.style.bottom = (big ? 30 : [70, 6, 0, 6, 70][i]) + 'px'; c.style.animationDelay = (i * .18) + 's'; c.style.zIndex = big ? 2 : 1; par.appendChild(c); });
+  $('[data-go]', s).onclick = () => { sfx('pop'); obChoose(); };
+  $('[data-restore]', s).onclick = () => importBackup();
+}
+function obChoose() {
+  const s = screen('ob', `<div class="ob-inner">${obTop(1, true)}<h1 class="ob-h">How will you meet?</h1><p class="ob-sub">Every PIP is one of a kind.</p>
+    <div class="ob-foot" style="margin-top:18px;gap:16px">
+      <button class="path-card" data-p="egg" style="--d:#f0d78a;--l:#fff1c2"><span class="tag">Surprise!</span><span class="art" data-art="egg"></span><span><h3>Hatch a mystery egg</h3><p>Tap to crack it open — common, rare, epic or even legendary.</p></span></button>
+      <button class="path-card" data-p="design" style="--d:#c9b8f2;--l:#e7e0ff"><span class="art" data-art="design"></span><span><h3>Design your own</h3><p>20 species, endless mixes. Pick ears, tails, wings, colors…</p></span></button>
+      <button class="path-card" data-p="real" style="--d:#ffc2d0;--l:#ffd3de"><span class="art" data-art="real"></span><span><h3>Inspired by my real pet</h3><p>A fictional pixel companion that looks and acts like a pet you love.</p></span></button>
+    </div><div style="flex:1"></div></div>`);
+  obBG(s);
+  const eggC = eggCanvas(0, 0); eggC.style.cssText = 'width:60px;height:75px'; $('[data-art="egg"]', s).appendChild(eggC);
+  const d = petCanvas({}, 2, E.mystery(Date.now() % 9999)); $('[data-art="design"]', s).appendChild(d);
+  const r = petCanvas({ eyes: 'happy' }, 2, E.presetGenome('dog', 0)); $('[data-art="real"]', s).appendChild(r);
+  $('[data-back]', s).onclick = () => obWelcome();
+  $$('[data-p]', s).forEach(b => b.onclick = () => { sfx('pop'); OB.path = b.dataset.p; if (OB.path === 'egg') obEggPick(); else if (OB.path === 'design') { OB.genome = OB.genome || E.presetGenome('cat', 0); obEditor(); } else { OB.genome = E.presetGenome('dog', 0); obEditor(); } });
+}
+/* eggs */
+const EGG_STYLES = [{ a: '#fff6ea', s: ['#ff8fb1', '#86c5ff', '#ffc93c'], k: 'spots' }, { a: '#d8eeff', s: ['#4fb2ff', '#ffffff'], k: 'zig' }, { a: '#ffe1ea', s: ['#8b6cff', '#ffc93c'], k: 'stars' }];
+function eggCanvas(style, cracks, glow) {
+  const st = EGG_STYLES[style % 3];
+  return E.paint(32, 40, P => {
+    P.ell(16, 22, 13, 16.5, st.a, 'egg', { clip: (x, y) => true });
+    P.recolor((x, y, m) => m && y > 22 && (((x - 16) / 13) ** 2 + ((y - 22) / 16.5) ** 2) > .0 && false, null);
+    if (st.k === 'spots') { P.recolor((x, y, m) => m && Math.hypot(x - 10, y - 14) < 2.6, st.s[0]); P.recolor((x, y, m) => m && Math.hypot(x - 21, y - 22) < 3.4, st.s[1]); P.recolor((x, y, m) => m && Math.hypot(x - 12, y - 30) < 2.2, st.s[2]); P.recolor((x, y, m) => m && Math.hypot(x - 22, y - 11) < 1.6, st.s[0]); }
+    if (st.k === 'zig') P.recolor((x, y, m) => m && Math.abs(y - 23 - (Math.floor(x / 3) % 2 ? 2 : -1)) < 1.6, st.s[0]);
+    if (st.k === 'zig') P.recolor((x, y, m) => m && Math.abs(y - 31 - (Math.floor(x / 3) % 2 ? -1 : 1)) < 1, st.s[0]);
+    if (st.k === 'stars') { for (const [x0, y0] of [[10, 15], [21, 20], [13, 29], [22, 31], [17, 10]]) P.recolor((x, y, m) => m && ((Math.abs(x - x0) < .6 && Math.abs(y - y0) < 2.2) || (Math.abs(y - y0) < .6 && Math.abs(x - x0) < 2.2)), st.s[(x0 + y0) % 2]); }
+    P.recolor((x, y, m, r) => m && Math.hypot(x - 10.5, y - 11) < 2, '#ffffff');
+    const crackPaths = [[[16, 6], [14, 10], [17, 13], [15, 16]], [[15, 16], [11, 18], [8, 17]], [[17, 13], [21, 15], [24, 13]], [[8, 17], [5, 21]], [[24, 13], [27, 17]], [[15, 16], [18, 20], [16, 23]]];
+    for (let i = 0; i < Math.min(cracks, crackPaths.length); i++) { const pth = crackPaths[i]; for (let j = 0; j < pth.length - 1; j++) { const [x0, y0] = pth[j], [x1, y1] = pth[j + 1]; const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)); for (let k = 0; k <= n; k++) P.px(Math.round(x0 + (x1 - x0) * k / n), Math.round(y0 + (y1 - y0) * k / n), '#5a3a6a', 'cr'); } }
   });
 }
-function openSheet(html,{onClose,label}={}){
-  closeSheet();
-  const prev=document.activeElement;
-  const w=document.createElement('div');w.id='sheet';
-  w.innerHTML=`<div class="scrim" data-close></div><div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(label||'Panel')}"><div class="grab"></div>${html}</div>`;
-  app.appendChild(w);
-  w._prev=prev;w._onClose=onClose;
-  w.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>closeSheet()));
-  w.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet();});
-  const f=w.querySelector('[autofocus]')||w.querySelector('button,input,textarea');f&&f.focus();
-  return w;
+function obEggPick() {
+  const s = screen('ob', `<div class="ob-inner">${obTop(2, true)}<h1 class="ob-h">Pick an egg</h1><p class="ob-sub">Something is wiggling inside each one…</p>
+    <div class="egg-choose">${[0, 1, 2].map(i => `<button class="egg-pick" data-egg="${i}" aria-label="Egg ${i + 1}"></button>`).join('')}</div>
+    <div style="flex:1"></div><div class="notice"><span>✨</span><span>Rarity is just for fun: <b>Common</b> 40% · <b>Rare</b> 30% · <b>Epic</b> 22% · <b>Legendary</b> 8%. No paid rerolls, ever.</span></div></div>`);
+  obBG(s);
+  $$('[data-egg]', s).forEach(b => { const c = eggCanvas(+b.dataset.egg, 0); b.appendChild(c); b.onclick = () => { sfx('pop'); obHatch(+b.dataset.egg); }; });
+  $('[data-back]', s).onclick = () => obChoose();
 }
-function closeSheet(){const w=document.getElementById('sheet');if(!w)return;const p=w._prev;const cb=w._onClose;w.remove();cb&&cb();p&&p.focus&&document.contains(p)&&p.focus();}
-
-function topbar(title,{back=true,right=''}={}){
-  return `<div class="topbar">${back?`<button class="iconbtn" data-back aria-label="Back">${ICON.back}</button>`:'<span style="width:44px"></span>'}<div class="title">${esc(title)}</div>${right||'<span style="width:44px"></span>'}</div>`;
-}
-function tabs(cur){
-  const t=[['home','Home',ICON.home],['play','Play',ICON.play],['memories','Memories',ICON.mem],['pet','Pet',ICON.paw]];
-  return `<nav class="tabs" aria-label="Main">${t.map(([k,l,i])=>`<button class="tab" data-go="${k}" ${cur===k?'aria-current="page"':''}>${i}<span>${l}</span></button>`).join('')}</nav>`;
-}
-function progress(n,of){return `<div class="progress" aria-label="Step ${n} of ${of}">${Array.from({length:of},(_,i)=>`<i class="${i<n?'on':''}"></i>`).join('')}</div>`;}
-
-/* ---------------- routing ---------------- */
-const history_=[];
-function go(view,params,{replace=false}={}){
-  if(!replace&&S.view!=='boot') history_.push([S.view,S.params]);
-  S.view=view;S.params=params||{};render();
-}
-function back(){const p=history_.pop();if(p){S.view=p[0];S.params=p[1];render();}else{go(S.save.pet?'home':'welcome',{},{replace:true});}}
-function render(){
-  closeSheet();
-  stopRecognition();
-  const v=VIEWS[S.view]||VIEWS.welcome;
-  app.innerHTML=`<div class="view">${v.html()}</div>`;
-  app.querySelectorAll('[data-back]').forEach(b=>b.addEventListener('click',back));
-  app.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.go;history_.length=0;go(k,{},{replace:true});}));
-  v.bind&&v.bind();
-  paintSave();
-  const h=app.querySelector('h1,h2');if(h){h.setAttribute('tabindex','-1');h.focus({preventScroll:true});}
-  window.Frame&&Frame.tone('dark');
-}
-
-/* ---------------- scene + animation loop ---------------- */
-let scene=null; // {canvas,ctx,W,H,spots,mode,toys}
-function mountScene(sel,opts){
-  const c=app.querySelector(sel);if(!c)return;
-  const cw=c.parentElement.clientWidth;const W=Math.floor(cw/2);
-  const avail=app.clientHeight;const H=opts.H||Math.max(150,Math.min(200,Math.floor(avail*.5/2)));
-  c.width=W;c.height=H;c.style.width=W*2+'px';c.style.height=H*2+'px';
-  const ctx=c.getContext('2d');ctx.imageSmoothingEnabled=false;
-  scene=Object.assign({canvas:c,ctx,W,H},opts);
-  return scene;
-}
-function setPet(state,ms){S.anim={state,until:performance.now()+(ms||0),start:performance.now()};}
-function petPose(now){
-  const a=S.anim;let st=a.state;if(st!=='idle'&&st!=='rest'&&now>a.until){st='idle';S.anim.state='idle';}
-  const t=now-a.start,rm=reduce();
-  const f=Math.floor(t/150);
-  const pose={};
-  if(st==='idle'){const cyc=Math.floor(now/450)%8;if(!rm)pose.dy=cyc%2;pose.blink=!rm&&Math.floor(now/180)%22===0;pose.wag=rm?0:(cyc%4<2?0:1);}
-  if(st==='react'){pose.dy=rm?0:[0,-3,-5,-3,0,0][f%6];pose.mouth=true;pose.wag=f%2;}
-  if(st==='eat'){pose.eat=true;pose.mouth=!rm&&f%2===0;pose.dy=0;}
-  if(st==='play'){pose.dy=rm?0:[0,-4,-6,-4,0,0][f%6];pose.wag=f%2;}
-  if(st==='rest'){pose.rest=true;pose.dy=0;}
-  if(st==='blink'){pose.blink=true;}
-  return {pose,st,t,f};
-}
-function loop(now){
-  requestAnimationFrame(loop);
-  if(!scene||!document.contains(scene.canvas))return;
-  const {ctx,W,H}=scene;
-  const room=A.drawRoom(ctx,W,H,{bowlFull:S.anim.state==='eat'});
-  scene.spots=room.spots;
-  if(scene.toys){ // find-the-toy
-    scene.toys.forEach(t=>{if(t.found)return;const sp=room.spots[t.spot];A.bitmap(ctx,A.TOYS[t.kind].rows,sp.x,sp.y,A.TOYS[t.kind].map,2);
-      if(scene.hint===t.spot){ctx.strokeStyle='#fffaf0';ctx.lineWidth=1;const k=(Math.floor(now/300)%2)&&!reduce();ctx.strokeRect(sp.x-3-k,sp.y-3-k,20+2*k,20+2*k);} });
-  }
-  const look=scene.look||(S.save.pet&&S.save.pet.appearance)||(S.draft&&S.draft.appearance);
-  if(look&&!scene.noPet){
-    const {pose,st,f}=petPose(now);
-    const px=room.pet.x+(scene.petDx||0),py=room.pet.y;
-    // shadow
-    ctx.fillStyle='rgba(30,40,30,.25)';ctx.fillRect(px-16,py-2,32,3);
-    A.drawPet(ctx,look,pose,px,py,false);
-    if(st==='react'&&!reduce()){A.drawHeart(ctx,px+14,py-56-(f%6)*2);if(f%4<2)A.drawHeart(ctx,px-20,py-50);}
-    if(st==='react'&&reduce()){A.drawHeart(ctx,px+14,py-56);}
-    if(st==='play'){A.bitmap(ctx,A.TOYS.ball.rows,px+18+(reduce()?0:(f%6)*2),py-14-(reduce()?0:[0,6,10,6,0,0][f%6]),A.TOYS.ball.map,2);}
-    if(st==='eat'){const fd=A.FOODS[S.anim.food||'fish'];A.bitmap(ctx,fd.rows,px-6,py-10,fd.map,2);}
-    if(st==='rest'){A.drawZ(ctx,px+12,py-44-(reduce()?0:Math.floor(now/500)%3*2));}
-  }
-  if(scene.overlay)scene.overlay(ctx,now);
-}
-requestAnimationFrame(loop);
-
-/* ---------------- pet rules ---------------- */
-function stats(){return S.save.stats;}
-function canChange(){const now=Date.now();stats().changes=stats().changes.filter(t=>now-t<3600e3);return stats().changes.length<3;}
-function recordAction(type,payload,actionId){
-  const id=actionId||uid();
-  if(S.save.actions.some(a=>a.action_id===id))return {dup:true};
-  const now=Date.now();
-  const ev={action_id:id,pet_id:S.save.pet.id,type,payload:payload||{},client_time:now,version:1,applied:null};
-  const st=stats();
-  if(type==='feed'){const lastFeed=S.save.actions.filter(a=>a.type==='feed'&&a.applied).pop();
-    if((!lastFeed||now-lastFeed.client_time>=600e3)&&canChange()){st.comfort=Math.min(100,st.comfort+5);st.changes.push(now);ev.applied={comfort:5};}}
-  if(type==='game_complete'&&canChange()){st.energy=Math.max(0,st.energy-5);st.changes.push(now);ev.applied={energy:-5};}
-  if(type==='rest'&&canChange()){st.energy=Math.min(100,st.energy+5);st.changes.push(now);ev.applied={energy:5};}
-  S.save.actions.push(ev);if(S.save.actions.length>500)S.save.actions=S.save.actions.slice(-500);
-  persist();return {ev};
-}
-function statusLine(){
-  const p=S.save.pet;if(!p)return '';
-  const st=S.anim.state;
-  if(st==='eat')return `${p.name} is eating on the rug.`;
-  if(st==='react')return `${p.name} leans into your hand.`;
-  if(st==='play')return `${p.name} is chasing the ball.`;
-  if(st==='rest')return `${p.name} is napping. Tap to wake.`;
-  if(stats().energy<45)return `${p.name} is on the rug and looks a little sleepy.`;
-  const last=S.save.actions[S.save.actions.length-1];
-  if(last&&Date.now()-last.client_time>36*3600e3)return `${p.name} is happy to see you back.`;
-  return `${p.name} is sitting on the rug.`;
-}
-
-/* ---------------- views ---------------- */
-const VIEWS={};
-VIEWS.welcome={
-  html:()=>`<div class="scene-wrap"><canvas class="scene" id="scene" aria-label="A small pixel room with a sleeping cat on a green rug." role="img"></canvas></div>
-  <div class="scroll stack" style="padding-top:22px">
-    <div class="tag">Pixel pet · beta</div>
-    <h1>A little place for your pet</h1>
-    <p class="muted">Make an original pet, or a pixel companion inspired by a pet who lives far away. It's a playful character — not your real pet, and not a treatment for anything.</p>
-    <p class="small muted">No account needed. Your pet is saved on this device.</p>
-  </div>
-  <div class="foot"><button class="btn primary block" data-create>Create a pet</button><button class="btn block" data-restore>Restore backup</button>
-  <button class="btn ghost block" data-privacy style="min-height:40px;font-size:14px">How PIP handles your data</button></div>`,
-  bind(){
-    mountScene('#scene',{H:150,look:{species:'cat',palette:'cream',ear:'pointed',marking:'tabby'}});setPet('rest',0);
-    app.querySelector('[data-create]').onclick=()=>{S.draft={appearance:{species:'cat',palette:'cream',ear:'pointed',marking:'none'},undo:[],name:'',addressAs:'',personality:'gentle',bio:'',mode:'original',photo:null};setPet('idle');go('mode');};
-    app.querySelector('[data-restore]').onclick=()=>pickBackup();
-    app.querySelector('[data-privacy]').onclick=()=>openSheet(`<div class="sh-head"><h2>Your data in PIP</h2><button class="iconbtn" data-close aria-label="Close">${ICON.close}</button></div><div class="sh-body stack">${privacyFacts()}</div>`,{label:'Data'});
-  }
-};
-function privacyFacts(){return `<p><b>On this device:</b> your pet, actions, memories and recent conversation (IndexedDB). Clearing site data deletes them — export a backup first.</p>
-<p><b>Sent when you talk:</b> your pet's profile, the last 8 messages and up to 5 memories you saved and allowed, to generate one reply. Not stored by PIP's server.</p>
-<p><b>Photos:</b> optional. Only the cropped square, only if you turn on server analysis. Otherwise colors are sampled on your device.</p>
-<p><b>Voice:</b> your browser's speech service turns speech into text; PIP never keeps audio, and you check the text before sending.</p>`;}
-
-VIEWS.mode={
-  html:()=>`${topbar('New pet')}${progress(1,5)}<div class="scroll stack" style="padding-top:18px">
-   <h1>Who are we making?</h1>
-   <div class="stack" role="radiogroup" aria-label="Pet source">
-    <button class="choice" role="radio" data-m="original" aria-checked="${S.draft.mode==='original'}"><div><b>An original pet</b><span>Pick a template and make it yours. Uses only the choices you make here.</span></div></button>
-    <button class="choice" role="radio" data-m="real" aria-checked="${S.draft.mode==='real'}"><div><b>Based on a real pet</b><span>Start from a photo and the habits you describe. PIP plays a fictional companion inspired by them — it can't know how your real pet is doing.</span></div></button>
-   </div></div><div class="foot"><button class="btn primary block" data-next>Continue</button></div>`,
-  bind(){
-    app.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>{
-      if(S.draft.mode==='real'&&b.dataset.m==='original'&&S.draft.photo){confirmDialog({title:'Remove the photo?',body:'Switching to an original pet keeps your appearance choices but discards the photo you picked.',verb:'Remove photo and switch'}).then(ok=>{if(ok){S.draft.photo=null;S.draft.mode='original';render();}});return;}
-      S.draft.mode=b.dataset.m;app.querySelectorAll('[data-m]').forEach(x=>x.setAttribute('aria-checked',String(x===b)));});
-    app.querySelector('[data-next]').onclick=()=>go(S.draft.mode==='real'?'photo':'appearance');
-  }
-};
-
-VIEWS.photo={
-  html:()=>`${topbar('Photo')}${progress(2,5)}<div class="scroll stack" style="padding-top:18px">
-   <h1>Start from a photo</h1>
-   <p class="muted">Optional. Use one clear photo of your pet. You'll crop it next — leave out faces, addresses and anything personal.</p>
-   <div class="li" style="cursor:default"><div class="grow"><b>Analyze on PIP's server</b><span style="white-space:normal">Sends only the cropped square, once, to suggest colors and markings. Off: colors are sampled on this device.</span></div>
-   <button class="switch" role="switch" aria-checked="${!!S.draft.cloud}" aria-label="Analyze photo on server" data-cloud></button></div>
-   <input type="file" accept="image/*" id="photoIn" hidden>
-  </div><div class="foot"><button class="btn primary block" data-pick>Pick a photo</button><button class="btn block" data-skip>Skip — set up by hand</button></div>`,
-  bind(){
-    const sw=app.querySelector('[data-cloud]');sw.onclick=()=>{S.draft.cloud=!S.draft.cloud;sw.setAttribute('aria-checked',String(S.draft.cloud));};
-    const inp=app.querySelector('#photoIn');
-    app.querySelector('[data-pick]').onclick=()=>inp.click();
-    inp.onchange=()=>{const f=inp.files[0];if(!f)return;
-      if(!/^image\//.test(f.type)){toast('That file isn’t an image. Try a JPEG or PNG.');return;}
-      if(f.size>15e6){toast('That photo is over 15 MB. Pick a smaller one.');return;}
-      const url=URL.createObjectURL(f);const img=new Image();img.onload=()=>{S.draft.photo={url,w:img.naturalWidth,h:img.naturalHeight,x:0,y:0,z:1,r:0};go('crop');};
-      img.onerror=()=>toast('Couldn’t open that image format. Try a JPEG or PNG.');img.src=url;};
-    app.querySelector('[data-skip]').onclick=()=>{S.draft.suggestion=null;go('appearance');};
-  }
-};
-
-VIEWS.crop={
-  html:()=>`${topbar('Crop')}${progress(2,5)}<div class="scroll stack" style="padding-top:12px">
-    <h2>Frame just your pet</h2><p class="small muted">Only the area inside the square is used. Drag the photo, or use the buttons.</p>
-    <div class="crop" id="crop"><img id="cimg" alt="Your pet photo" src="${esc(S.draft.photo.url)}"><div class="frame"></div></div>
-    <div class="field"><label class="label" for="zoom">Zoom</label><input id="zoom" type="range" min="1" max="4" step=".05" value="${S.draft.photo.z}"></div>
-    <div class="row" style="justify-content:space-between;flex-wrap:wrap">
-      <div class="row" role="group" aria-label="Move photo"><button class="btn" data-mv="-1,0" aria-label="Move left">←</button><button class="btn" data-mv="0,-1" aria-label="Move up">↑</button><button class="btn" data-mv="0,1" aria-label="Move down">↓</button><button class="btn" data-mv="1,0" aria-label="Move right">→</button></div>
-      <div class="row"><button class="btn" data-rot>Rotate</button><button class="btn ghost" data-reset>Reset</button></div>
-    </div>
-    <p class="small muted" id="cropmsg" aria-live="polite"></p>
-  </div><div class="foot"><button class="btn primary block" data-cont>Continue</button></div>`,
-  bind(){
-    const P=S.draft.photo,img=app.querySelector('#cimg'),box=app.querySelector('#crop');
-    const base=()=>{const b=box.clientWidth;const s=Math.max(b/P.w,b/P.h)*((P.r%180)?Math.max(P.w,P.h)/Math.min(P.w,P.h):1);return s;};
-    const paint=()=>{const s=base()*P.z;img.style.width=P.w*s+'px';img.style.height=P.h*s+'px';img.style.transform=`translate(calc(-50% + ${P.x}px),calc(-50% + ${P.y}px)) rotate(${P.r}deg)`;};
-    paint();
-    let drag=null;box.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,px:P.x,py:P.y};box.setPointerCapture(e.pointerId);});
-    box.addEventListener('pointermove',e=>{if(!drag)return;const k=box.getBoundingClientRect().width/box.clientWidth;P.x=drag.px+(e.clientX-drag.x)/k;P.y=drag.py+(e.clientY-drag.y)/k;paint();});
-    box.addEventListener('pointerup',()=>drag=null);
-    app.querySelector('#zoom').oninput=e=>{P.z=+e.target.value;paint();};
-    app.querySelectorAll('[data-mv]').forEach(b=>b.onclick=()=>{const [dx,dy]=b.dataset.mv.split(',').map(Number);P.x+=dx*12;P.y+=dy*12;paint();});
-    app.querySelector('[data-rot]').onclick=()=>{P.r=(P.r+90)%360;paint();};
-    app.querySelector('[data-reset]').onclick=()=>{Object.assign(P,{x:0,y:0,z:1,r:0});app.querySelector('#zoom').value=1;paint();};
-    app.querySelector('[data-cont]').onclick=async e=>{
-      const btn=e.currentTarget;btn.disabled=true;btn.textContent='Looking at the photo…';
-      const out=document.createElement('canvas');out.width=out.height=384;const cx=out.getContext('2d');
-      const bw=box.clientWidth,frame=bw*.76,s=base()*P.z,scale=384/frame;
-      cx.fillStyle='#000';cx.fillRect(0,0,384,384);cx.translate(192+P.x*scale,192+P.y*scale);cx.rotate(P.r*Math.PI/180);
-      cx.drawImage(img,-P.w*s*scale/2,-P.h*s*scale/2,P.w*s*scale,P.h*s*scale);
-      const msg=app.querySelector('#cropmsg');
-      let sug=null;
-      if(S.draft.cloud){
-        try{const r=await api('pet-appearance',{image:out.toDataURL('image/jpeg',.82)},20000);
-          sug={species:r.species_template,palette:r.palette,marking:r.marking_preset,ear:r.ear,source:'server',status:r.status,confidence:r.confidence};}
-        catch(err){msg.textContent=(err.code==='NO_MODEL'?'Server analysis isn’t available on this deployment.':'Server analysis didn’t finish.')+' Using colors sampled on your device instead.';}
-      }
-      if(!sug){sug=Object.assign(localSample(cx,out),{source:'device'});}
-      S.draft.suggestion=sug;
-      const a=S.draft.appearance;S.draft.undo.push(Object.assign({},a));
-      if(sug.species)a.species=sug.species;a.palette=sug.palette;if(sug.marking)a.marking=sug.marking;a.ear=sug.ear||(a.species==='dog'?'floppy':'pointed');
-      setTimeout(()=>go('appearance'),msg.textContent?1200:0);
-    };
-  }
-};
-function localSample(cx,canvas){
-  const d=cx.getImageData(0,0,canvas.width,canvas.height).data;let r=0,g=0,b=0,n=0;
-  for(let y=110;y<274;y+=3)for(let x=110;x<274;x+=3){const i=(y*canvas.width+x)*4;const L=(d[i]+d[i+1]+d[i+2])/3;if(L<8)continue;r+=d[i];g+=d[i+1];b+=d[i+2];n++;}
-  if(!n)return {palette:'cream'};r/=n;g/=n;b/=n;
-  let best='cream',bd=1e9;for(const [k,p] of Object.entries(A.PALETTES)){if(k==='tricolor')continue;const h=p.base;const pr=parseInt(h.slice(1,3),16),pg=parseInt(h.slice(3,5),16),pb=parseInt(h.slice(5,7),16);
-    const dd=(pr-r)**2*.3+(pg-g)**2*.59+(pb-b)**2*.11;if(dd<bd){bd=dd;best=k;}}
-  return {palette:best};
-}
-
-VIEWS.appearance={
-  html:()=>{const a=S.draft.appearance,sug=S.draft.suggestion,edit=S.params.edit;
-  const grp=(title,key,opts,sw)=>`<div class="stack" style="gap:8px"><div class="label" id="g-${key}">${title}</div><div class="chips" role="radiogroup" aria-labelledby="g-${key}">${Object.entries(opts).map(([k,v])=>`<button class="chip" role="radio" data-k="${key}" data-v="${k}" aria-checked="${a[key]===k}">${sw?`<span class="swatch" style="background:${sw[k].base}"></span>`:''}${esc(typeof v==='string'?v:v.name)}</button>`).join('')}</div></div>`;
-  return `${topbar(edit?'Appearance':'Look')}${edit?'':progress(3,5)}<div class="scroll stack" style="padding-top:12px">
-   <div class="preview"><canvas id="pv" width="52" height="52" role="img" aria-label="Preview of your pet"></canvas></div>
-   ${sug?`<p class="small"><span class="tag ${sug.status==='manual_review'?'clay':'ok'}">${sug.source==='server'?(sug.status==='manual_review'?'Low-confidence suggestion — please check each layer':'Suggested from your photo'):'Color sampled on this device'}</span> Everything below is editable. Unusual coats are shown as a stylized interpretation.</p>`:''}
-   ${grp('Species','species',{cat:'Cat',dog:'Dog'})}
-   ${grp('Coat color','palette',Object.fromEntries(Object.entries(A.PALETTES).map(([k,v])=>[k,v.name])),A.PALETTES)}
-   ${grp('Ears','ear',A.EARS)}
-   ${grp('Markings','marking',A.MARKINGS)}
-  </div><div class="foot"><div class="row"><button class="btn" data-undo ${S.draft.undo.length?'':'disabled aria-disabled="true"'} title="Undo last change">Undo</button><button class="btn primary" style="flex:1" data-next>${edit?'Save appearance':'Next'}</button></div></div>`;},
-  bind(){
-    const draw=()=>{const c=app.querySelector('#pv');A.drawPetIcon(c,S.draft.appearance,4);
-      c.setAttribute('aria-label',`Preview: ${A.PALETTES[S.draft.appearance.palette].name} ${S.draft.appearance.species}, ${A.EARS[S.draft.appearance.ear]} ears, ${A.MARKINGS[S.draft.appearance.marking]}`);};
-    draw();
-    app.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>{const a=S.draft.appearance;S.draft.undo.push(Object.assign({},a));a[b.dataset.k]=b.dataset.v;
-      if(b.dataset.k==='species'&&a.species==='dog'&&a.ear==='pointed')a.ear='floppy';if(b.dataset.k==='species'&&a.species==='cat'&&a.ear==='floppy')a.ear='pointed';
-      render();});
-    app.querySelector('[data-undo]').onclick=()=>{const p=S.draft.undo.pop();if(p){S.draft.appearance=p;render();}};
-    app.querySelector('[data-next]').onclick=async()=>{
-      if(S.params.edit){S.save.pet.appearance=Object.assign({},S.draft.appearance);if(await persist()){toast('Appearance saved.');back();}else toast('Couldn’t save on this device. Try again.');return;}
-      go('personality');};
-  }
-};
-
-const PERSONALITIES={
-  gentle:{name:'Gentle',ex:'Welcome home. Sit with me a minute — the rug is warm.'},
-  playful:{name:'Playful',ex:'You’re back! Quick, the ball rolled under the bed again!'},
-  cheeky:{name:'Cheeky',ex:'Oh, you again. Fine. You may pet me. Briefly.'},
-};
-VIEWS.personality={
-  html:()=>{const d=S.draft,edit=S.params.edit;return `${topbar(edit?'Name & personality':'Personality')}${edit?'':progress(4,5)}<div class="scroll stack" style="padding-top:12px">
-   <div class="row"><canvas id="pv" width="52" height="52" aria-hidden="true"></canvas><h2>${edit?'Edit':'Name and voice'}</h2></div>
-   <div class="field"><label class="label" for="nm">Pet name</label><input id="nm" maxlength="24" autocomplete="off" value="${esc(d.name)}" aria-describedby="nm-h nm-e"><span class="hint" id="nm-h">1–24 characters</span><span class="err" id="nm-e" aria-live="polite"></span></div>
-   <div class="field"><label class="label" for="as">What should ${esc(d.name||'your pet')} call you? <span class="muted">(optional)</span></label><input id="as" maxlength="24" value="${esc(d.addressAs)}"></div>
-   <div class="label" id="pg">How they talk</div>
-   <div class="stack" role="radiogroup" aria-labelledby="pg">${Object.entries(PERSONALITIES).map(([k,v])=>`<button class="choice" role="radio" data-p="${k}" aria-checked="${d.personality===k}"><div><b>${v.name}</b><span>When you come home after a long day: “${esc(v.ex)}”</span></div></button>`).join('')}</div>
-   <div class="field"><label class="label" for="bio">Habits and little things <span class="muted">(optional)</span></label><textarea id="bio" maxlength="300" aria-describedby="bio-c">${esc(d.bio)}</textarea><span class="hint" id="bio-c">${d.bio.length}/300 · Only what you write here is used. PIP never guesses personality from a photo.</span></div>
-  </div><div class="foot"><button class="btn primary block" data-next>${edit?'Save':'Next'}</button></div>`;},
-  bind(){
-    const d=S.draft;A.drawPetIcon(app.querySelector('#pv'),d.appearance,1.2);
-    const nm=app.querySelector('#nm'),as=app.querySelector('#as'),bio=app.querySelector('#bio');
-    nm.oninput=()=>{d.name=nm.value;app.querySelector('#nm-e').textContent='';};as.oninput=()=>d.addressAs=as.value;
-    bio.oninput=()=>{d.bio=bio.value;app.querySelector('#bio-c').firstChild.textContent=bio.value.length+'/300 · Only what you write here is used. PIP never guesses personality from a photo.';};
-    app.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{d.personality=b.dataset.p;app.querySelectorAll('[data-p]').forEach(x=>x.setAttribute('aria-checked',String(x===b)));});
-    app.querySelector('[data-next]').onclick=async()=>{
-      const n=d.name.trim();if(!n){app.querySelector('#nm-e').textContent='Give your pet a name (1–24 characters).';nm.focus();return;}
-      d.name=n.slice(0,24);
-      if(S.params.edit){Object.assign(S.save.pet,{name:d.name,addressAs:d.addressAs.trim(),personality:d.personality,bio:d.bio.trim()});if(await persist()){toast('Saved.');back();}else toast('Couldn’t save on this device.');return;}
-      go('meet');};
-  }
-};
-
-VIEWS.meet={
-  html:()=>{const d=S.draft;return `<div class="scene-wrap"><canvas class="scene" id="scene" role="img" aria-label="${esc(d.name)} sits on the rug in a cozy pixel room."></canvas></div>
-  ${progress(5,5)}
-  <div class="scroll stack" style="padding-top:14px">
-    <h1>Meet ${esc(d.name)}</h1>
-    <div class="bubble" style="margin:0">Hi${d.addressAs?', '+esc(d.addressAs):''}. I’m ${esc(d.name)}. This room is ours now — come by whenever you like.</div>
-    ${d.mode==='real'?`<p class="small muted">${esc(d.name)} here is a pixel companion inspired by your pet. It can’t see, hear or know how your real pet is doing.</p>`:''}
-    <p class="small muted">This welcome is written by PIP, not generated by AI.</p>
-    <p class="small" id="meeterr" role="alert"></p>
-  </div><div class="foot"><button class="btn block" data-pet>Pet once</button><button class="btn primary block" data-meet>Meet ${esc(d.name)}</button></div>`;},
-  bind(){
-    mountScene('#scene',{H:160,look:S.draft.appearance});setPet('idle');
-    app.querySelector('[data-pet]').onclick=()=>{setPet('react',1100);vib(15);blip(880);announce(`${S.draft.name} leans into your hand.`);};
-    app.querySelector('[data-meet]').onclick=async e=>{
-      const d=S.draft;e.currentTarget.disabled=true;
-      const pet={id:uid(),local_owner_id:S.save.ownerId||(S.save.ownerId=uid()),mode:d.mode,name:d.name,addressAs:d.addressAs.trim(),species_template:d.appearance.species,
-        appearance:Object.assign({},d.appearance),personality:d.personality,bio:d.bio.trim(),schema_version:SCHEMA,created:Date.now(),photoUsed:!!d.photo};
-      S.save.pet=pet;
-      if(await persist()){if(d.photo)URL.revokeObjectURL(d.photo.url);S.draft=null;history_.length=0;go('home',{first:true},{replace:true});}
-      else{S.save.pet=null;e.currentTarget.disabled=false;app.querySelector('#meeterr').textContent='Couldn’t save on this device (storage may be full or blocked). Your choices are kept — try again.';}
-    };
-  }
-};
-
-VIEWS.home={
-  html:()=>{const p=S.save.pet;const last=[...S.save.convo].reverse().find(m=>m.role==='pet'&&m.status!=='failed');
-  return `<div class="hud"><div><div class="name">${esc(p.name)}</div><button class="save" data-save style="border:0;background:none;padding:0;cursor:pointer"></button></div>
-    <span class="tag">${p.mode==='real'?'Inspired by your pet':'Original pet'}</span></div>
-  <div class="scene-wrap"><canvas class="scene" id="scene" role="img" aria-label="${esc(statusLine())}"></canvas></div>
-  <p class="sr-only" id="petstatus" aria-live="polite">${esc(statusLine())}</p>
-  <div class="bubble" id="bubble">${last?esc(last.text):S.params.first?`${esc(p.name)} is settling in. Try Pet or Talk.`:esc(statusLine())}</div>
-  <div class="actions" role="group" aria-label="Interact">
-    <button class="act" data-a="feed">${ICON.feed}Feed</button><button class="act" data-a="pet">${ICON.pet}Pet</button>
-    <button class="act" data-a="talk">${ICON.talk}Talk</button><button class="act" data-a="play">${ICON.play}Play</button>
-  </div>
-  ${stats().energy<45&&S.anim.state!=='rest'?`<div style="padding:0 16px"><button class="btn block" data-rest>Let ${esc(p.name)} nap</button></div>`:''}
-  <div style="flex:1"></div>${tabs('home')}`;},
-  bind(){
-    const p=S.save.pet;mountScene("#scene",{H:Math.max(140,Math.min(230,Math.floor((app.clientHeight-400)/2)))});
-    const c=app.querySelector('#scene');
-    let sx=null,moved=0;
-    c.addEventListener('pointerdown',e=>{sx=e.clientX;moved=0;});
-    c.addEventListener('pointermove',e=>{if(sx!=null)moved+=Math.abs(e.clientX-sx);sx=e.clientX;});
-    c.addEventListener('pointerup',()=>{sx=null;doPet();});
-    app.querySelector('[data-save]').onclick=()=>{if(S.saveState==='error')persist();};
-    app.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>({feed:openFeed,pet:doPet,talk:openTalk,play:()=>{history_.length=0;go('play',{},{replace:true});}})[b.dataset.a]());
-    const r=app.querySelector('[data-rest]');if(r)r.onclick=()=>{recordAction('rest');setPet('rest');refreshStatus();render();};
-    if(S.params.first&&!reduce())setPet('react',900);
-  }
-};
-function refreshStatus(){const s=app.querySelector('#petstatus');if(s)s.textContent=statusLine();const c=app.querySelector('#scene');if(c)c.setAttribute('aria-label',statusLine());}
-let petBusy=0;
-function doPet(){
-  const now=performance.now();if(now<petBusy)return;petBusy=now+600;
-  if(S.anim.state==='rest'){setPet('idle');refreshStatus();return;}
-  setPet('react',1000);vib(12);blip(880);
-  const b=app.querySelector('#bubble');if(b)b.textContent=`${S.save.pet.name} leans into your hand.`;
-  announce(`${S.save.pet.name} leans into your hand.`);refreshStatus();
-}
-
-function openFeed(){
-  const foods=Object.entries(A.FOODS);let pick=null;
-  const w=openSheet(`<div class="sh-head"><h2>Feed ${esc(S.save.pet.name)}</h2><button class="iconbtn" data-close aria-label="Close">${ICON.close}</button></div>
-   <div class="sh-body stack"><div class="stack" role="radiogroup" aria-label="Food">${foods.map(([k,f])=>`<button class="choice" role="radio" aria-checked="false" data-f="${k}"><canvas width="16" height="14" data-ic="${k}" style="width:48px;height:42px;image-rendering:pixelated;flex:none" aria-hidden="true"></canvas><div><b>${f.name}</b><span>${esc(S.save.pet.name)} eats it on the rug — about 2 seconds.</span></div></button>`).join('')}</div>
-   <p class="small muted">Pretend snacks for a pixel pet — not diet advice for real animals.</p></div>
-   <div class="sh-foot"><button class="btn primary block" data-give disabled>Choose a snack</button></div>`,{label:'Feed'});
-  w.querySelectorAll('[data-ic]').forEach(c=>{const x=c.getContext('2d');const f=A.FOODS[c.dataset.ic];A.bitmap(x,f.rows,0,0,f.map,2);});
-  const give=w.querySelector('[data-give]');
-  w.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{pick=b.dataset.f;w.querySelectorAll('[data-f]').forEach(x=>x.setAttribute('aria-checked',String(x===b)));give.disabled=false;give.textContent='Give '+A.FOODS[pick].name.toLowerCase();});
-  const aid=uid(); // one id per confirm → retries never count twice
-  give.onclick=()=>{give.disabled=true;const r=recordAction('feed',{food:pick},aid);closeSheet();
-    S.anim.food=pick;setPet('eat',reduce()?900:2100);blip(520);
-    const msg=`${S.save.pet.name} ate the ${A.FOODS[pick].name.toLowerCase()}. ${r.ev&&r.ev.applied?'':'(Snacks only count once every 10 minutes, but treats are always welcome.)'}`;
-    setTimeout(()=>{const b=app.querySelector('#bubble');if(b)b.textContent=msg;announce(msg);refreshStatus();},reduce()?50:2100);};
-}
-
-/* ---------------- talk ---------------- */
-let convoState='draft';
-function openTalk(prefill){
-  const p=S.save.pet;
-  const w=openSheet(`<div class="sh-head"><h2>Talk with ${esc(p.name)}</h2><button class="iconbtn" data-close aria-label="Close">${ICON.close}</button></div>
-    <div class="sh-body" style="flex:1;min-height:200px"><div class="msgs" id="msgs" aria-live="polite"></div><div id="propbox"></div></div>
-    <div class="sh-foot"><div class="field" style="gap:4px"><label class="label" for="say">Message to ${esc(p.name)}</label>
-     <div class="composer"><textarea id="say" maxlength="500" rows="1" placeholder="Say something…">${esc(prefill||S.talkDraft||'')}</textarea>
-     <button class="iconbtn" data-mic aria-label="Record voice instead">${ICON.mic}</button><button class="btn primary" data-send aria-label="Send" style="min-width:52px;padding:0 12px">${ICON.send}</button></div>
-     <span class="hint" id="saycount">${(prefill||S.talkDraft||'').length}/500</span></div></div>`,{label:'Talk',onClose:()=>{abortAI();}});
-  w.querySelector('.sheet').style.height='72%';
-  paintMsgs();
-  const ta=w.querySelector('#say');
-  ta.oninput=()=>{S.talkDraft=ta.value;w.querySelector('#saycount').textContent=ta.value.length+'/500';};
-  ta.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();w.querySelector('[data-send]').click();}};
-  w.querySelector('[data-send]').onclick=()=>{const t=ta.value.trim();if(!t||convoState==='sending')return;sendMessage(t);};
-  w.querySelector('[data-mic]').onclick=()=>openRecord();
-}
-function paintMsgs(){
-  const box=document.getElementById('msgs');if(!box)return;
-  const msgs=S.save.convo.slice(-16);
-  box.innerHTML=msgs.length?msgs.map(m=>`<div class="msg ${m.role}${m.status==='failed'?' failed':''}">${esc(m.text)}${m.role==='pet'?`<span class="meta">${m.simple?'Simple response · not AI':'AI reply'}${m.referenced&&m.referenced.length?' · used '+m.referenced.length+' saved memor'+(m.referenced.length>1?'ies':'y'):''} · <button data-flag="${m.id}" style="border:0;background:none;padding:0;color:inherit;text-decoration:underline;cursor:pointer;font-size:11px">Not right?</button></span>`:m.status==='failed'?'<span class="meta">Not delivered</span>':''}</div>`).join('')
-   :`<p class="small muted" style="text-align:center;padding:16px 0">Say hello. ${esc(S.save.pet.name)} only knows what you tell them and what you choose to save.</p>`;
-  if(convoState==='sending')box.insertAdjacentHTML('beforeend',`<div class="msg pet" id="typing">…<span class="meta" id="waitmeta">${esc(S.save.pet.name)} is thinking</span></div>`);
-  box.querySelectorAll('[data-flag]').forEach(b=>b.onclick=()=>{const m=S.save.convo.find(x=>x.id===b.dataset.flag);if(m){m.flagged=true;persist();}toast('Thanks — this reply is marked as not right and won’t be reused.');});
-  const body=box.parentElement;body.scrollTop=body.scrollHeight;
-}
-function pickMemories(text){
-  const words=new Set(text.toLowerCase().split(/\W+/).filter(w=>w.length>2));
-  return S.save.memories.filter(m=>m.retrieval_enabled&&m.user_confirmed)
-    .map(m=>({m,s:m.text.toLowerCase().split(/\W+/).filter(w=>words.has(w)).length+(m.updated||m.created)/1e13}))
-    .sort((a,b)=>b.s-a.s).slice(0,5).map(x=>({id:x.m.id,text:x.m.text}));
-}
-let aiCtl=null,waitTimer=null;
-function abortAI(){if(aiCtl){aiCtl.abort();aiCtl=null;}clearTimeout(waitTimer);if(convoState==='sending')convoState='failed';}
-async function api(task,body,timeout){
-  const ctl=new AbortController();aiCtl=ctl;const t=setTimeout(()=>ctl.abort(),timeout||20000);
-  try{const r=await fetch('/api/ai',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(Object.assign({task},body)),signal:ctl.signal});
-    const j=await r.json().catch(()=>({error:'Bad response'}));if(!r.ok){const e=new Error(j.error||'Request failed');e.code=j.code;e.status=r.status;throw e;}return j;}
-  catch(e){if(e.name==='AbortError'){const x=new Error('timeout');x.code='TIMEOUT';throw x;}throw e;}
-  finally{clearTimeout(t);if(aiCtl===ctl)aiCtl=null;}
-}
-async function sendMessage(text,requestId){
-  const p=S.save.pet;const rid=requestId||uid();
-  let um=S.save.convo.find(m=>m.request_id===rid&&m.role==='user');
-  if(!um){um={id:uid(),request_id:rid,role:'user',text,status:'sending',at:Date.now()};S.save.convo.push(um);}
-  um.status='sending';S.talkDraft='';const ta=document.getElementById('say');if(ta){ta.value='';document.getElementById('saycount').textContent='0/500';}
-  convoState='sending';paintMsgs();persist();
-  clearTimeout(waitTimer);
-  waitTimer=setTimeout(()=>{const m=document.getElementById('waitmeta');if(m){m.innerHTML=`Still thinking… <button id="stopwait" style="border:0;background:none;text-decoration:underline;cursor:pointer;color:inherit;font-size:11px">Stop waiting</button>`;document.getElementById('stopwait').onclick=()=>{abortAI();};}},12000);
-  const turns=S.save.convo.filter(m=>m.status!=='failed'&&!m.flagged).slice(-8).map(m=>({role:m.role,text:m.text}));
-  try{
-    const r=await api('pet-respond',{pet:{name:p.name,species:p.species_template,personality:PERSONALITIES[p.personality].name,mode:p.mode,addressAs:p.addressAs,bio:p.bio},turns,memories:pickMemories(text),event:'conversation'},20000);
-    clearTimeout(waitTimer);convoState='draft';um.status='sent';
-    const pm={id:uid(),request_id:rid,role:'pet',text:r.reply_text,status:'sent',model_version:r.model_version,referenced:r.referenced_memory_ids,at:Date.now()};
-    S.save.convo.push(pm);S.save.convo=S.save.convo.slice(-60);persist();
-    setPet(r.animation_key==='eat'?'react':r.animation_key==='rest'?'idle':r.animation_key==='idle'?'react':r.animation_key,1100);
-    const b=document.getElementById('bubble');if(b)b.textContent=r.reply_text;
-    paintMsgs();
-    if(r.memory_proposal&&S.save.settings.offerMemories)showProposal(r.memory_proposal);
-  }catch(e){
-    clearTimeout(waitTimer);convoState='failed';um.status='failed';persist();paintMsgs();
-    const why=e.code==='NO_MODEL'?'The AI model isn’t connected on this deployment yet.':e.code==='TIMEOUT'?'The reply took too long.':e.status===429?'Too many messages — wait a minute.':'PIP couldn’t reach the model.';
-    const box=document.getElementById('propbox');if(!box)return;
-    box.innerHTML=`<div class="proposal" role="alert" style="border-color:var(--clay);background:#fbf1ec"><p>${why} Your message is kept.</p><div class="row" style="margin-top:10px;flex-wrap:wrap"><button class="btn" data-retry>Retry</button><button class="btn ghost" data-simple>Use a simple response</button></div></div>`;
-    box.querySelector('[data-retry]').onclick=()=>{box.innerHTML='';sendMessage(text,rid);};
-    box.querySelector('[data-simple]').onclick=()=>{box.innerHTML='';um.status='sent';
-      S.save.convo.push({id:uid(),request_id:rid,role:'pet',text:simpleReply(text),status:'sent',simple:true,at:Date.now()});convoState='draft';persist();paintMsgs();setPet('react',900);};
-  }
-}
-function simpleReply(t){
-  const n=S.save.pet.name,l=t.toLowerCase();
-  if(/sick|vet|ill|hurt|health|eat(ing)? less|vomit/.test(l))return `I can't tell how a real animal is feeling. If you're worried, check in with whoever is caring for them, or a vet.`;
-  if(/miss|far|away|lonely/.test(l))return `I'm here on the rug whenever you open the app. Want to find a toy together?`;
-  if(/hello|hi|hey|你好/.test(l))return `Hi! ${n} is glad you stopped by.`;
-  if(/play|toy|ball|game/.test(l))return `Yes! Let's play Find the toy.`;
-  return `${n} tilts their head and listens.`;
-}
-function showProposal(pr){
-  const box=document.getElementById('propbox');if(!box)return;
-  box.innerHTML=`<div class="proposal"><div class="label">Save this? <span class="tag">You told me</span></div>
-   <div class="field" style="margin-top:8px"><label class="sr-only" for="ptext">Memory text</label><textarea id="ptext" maxlength="200">${esc(pr.text)}</textarea></div>
-   <div class="row" style="margin-top:8px"><button class="btn primary" data-save-mem>Save memory</button><button class="btn ghost" data-skip-mem>Not now</button></div>
-   <p class="small muted" style="margin-top:6px">Saved memories can be edited or forgotten in Memories.</p></div>`;
-  box.querySelector('[data-save-mem]').onclick=async()=>{const t=box.querySelector('#ptext').value.trim();if(!t)return;
-    S.save.memories.unshift({id:uid(),source_type:'you_shared',text:t.slice(0,200),user_confirmed:true,retrieval_enabled:true,created:Date.now()});
-    box.innerHTML=(await persist())?'<p class="small" role="status">Saved to Memories.</p>':'<p class="small" role="alert">Couldn’t save on this device.</p>';};
-  box.querySelector('[data-skip-mem]').onclick=()=>box.innerHTML='';
-}
-
-/* voice: browser speech recognition → editable transcript → send */
-let rec=null,recTimer=null;
-function stopRecognition(){if(rec){try{rec.abort();}catch(e){}rec=null;}clearInterval(recTimer);}
-function openRecord(){
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  const p=S.save.pet;
-  if(!SR){toast('Voice input isn’t supported in this browser. You can keep typing.');return;}
-  if(!S.save.settings.voiceConsent){
-    const w=openSheet(`<div class="sh-head"><h2>Use your voice?</h2><button class="iconbtn" data-close aria-label="Close">${ICON.close}</button></div>
-     <div class="sh-body stack"><p>Your browser's speech service turns what you say into text (Safari uses Apple, Chrome uses Google). PIP never stores audio.</p><p>You'll see and can edit the text before it's sent to ${esc(p.name)}. Recording stops after 30 seconds and never runs in the background.</p></div>
-     <div class="sh-foot stack"><button class="btn primary block" data-ok>Allow voice input</button><button class="btn block ghost" data-no>Keep typing</button></div>`,{label:'Voice consent'});
-    w.querySelector('[data-ok]').onclick=()=>{S.save.settings.voiceConsent=true;persist();openRecord();};
-    w.querySelector('[data-no]').onclick=()=>openTalk();
-    return;
-  }
-  let finalText='',interim='',secs=0,state='idle';
-  const w=openSheet(`<div class="sh-head"><h2>Talk to ${esc(p.name)}</h2><button class="iconbtn" data-close aria-label="Close">${ICON.close}</button></div>
-   <div class="sh-body stack" style="text-align:center"><div class="timer" id="rt" aria-live="off">0:00 / 0:30</div>
-    <button class="rec" id="recbtn" aria-pressed="false">Start</button>
-    <p class="small muted" id="rmsg" aria-live="polite">Tap Start, speak, then tap Stop.</p>
-    <div class="field" style="text-align:left" id="tbox" hidden><label class="label" for="tx">Check the text before sending</label><textarea id="tx" maxlength="500"></textarea></div>
-   </div><div class="sh-foot stack"><button class="btn primary block" id="rsend" hidden>Send to ${esc(p.name)}</button><button class="btn block" id="rback">Back to typing</button></div>`,{label:'Record'});
-  const btn=w.querySelector('#recbtn'),msg=w.querySelector('#rmsg'),rt=w.querySelector('#rt'),tbox=w.querySelector('#tbox'),tx=w.querySelector('#tx'),send=w.querySelector('#rsend');
-  const fmt=s=>`0:${String(s).padStart(2,'0')} / 0:30`;
-  function stop(){if(rec){try{rec.stop();}catch(e){}}clearInterval(recTimer);}
-  function done(){state='review';btn.classList.remove('on');btn.textContent='Re-record';btn.setAttribute('aria-pressed','false');
-    const t=(finalText+' '+interim).trim();if(!t){msg.textContent='Didn’t catch anything. Try again closer to the mic, or type instead.';return;}
-    tbox.hidden=false;tx.value=t;send.hidden=false;msg.textContent='Edit anything that’s wrong, then send.';tx.focus();}
-  btn.onclick=()=>{
-    if(state==='recording'){stop();return;}
-    finalText='';interim='';secs=0;rt.textContent=fmt(0);tbox.hidden=true;send.hidden=true;
-    rec=new SR();rec.lang=navigator.language||'en-US';rec.continuous=true;rec.interimResults=true;
-    rec.onresult=e=>{interim='';for(let i=e.resultIndex;i<e.results.length;i++){const r=e.results[i];if(r.isFinal)finalText+=r[0].transcript+' ';else interim+=r[0].transcript;}msg.textContent=(finalText+interim).trim()||'Listening…';};
-    rec.onerror=e=>{clearInterval(recTimer);state='idle';btn.classList.remove('on');btn.textContent='Start';
-      msg.textContent=e.error==='not-allowed'||e.error==='service-not-allowed'?'Microphone access was declined. You can keep typing instead.':e.error==='no-speech'?'Didn’t hear anything. Try again.':e.error==='network'?'The speech service couldn’t be reached. Try again or type.':e.error==='language-not-supported'?'This language isn’t supported for voice here. Please type.':'Recording stopped ('+e.error+'). Try again or type.';};
-    rec.onend=()=>{rec=null;clearInterval(recTimer);if(state==='recording')done();};
-    try{rec.start();}catch(e){msg.textContent='Couldn’t start recording. Try again.';return;}
-    state='recording';btn.classList.add('on');btn.textContent='Stop';btn.setAttribute('aria-pressed','true');msg.textContent='Listening…';
-    recTimer=setInterval(()=>{secs++;rt.textContent=fmt(secs);if(secs>=30){msg.textContent='30 seconds — stopped automatically.';stop();}},1000);
+function obHatch(style) {
+  const r = Math.random(); const rarity = r < .4 ? 'common' : r < .7 ? 'rare' : r < .92 ? 'epic' : 'legendary';
+  const genome = E.randomGenome(Math.floor(Math.random() * 1e9), rarity);
+  const s = screen('ob', `<div class="ob-inner">${obTop(2, true)}<h1 class="ob-h" id="hh">Tap the egg!</h1><p class="ob-sub" id="hs">Give it a few gentle taps to help it hatch.</p>
+    <div class="egg-stage"><div class="rays" aria-hidden="true"></div><div class="egg-glow" aria-hidden="true"></div><button class="egg-big" aria-label="Tap to crack the egg"></button></div>
+    <div class="ob-foot" id="hf"><p class="tap-hint" aria-hidden="true">👆 tap tap tap</p></div></div>`);
+  obBG(s);
+  const egg = $('.egg-big', s); let taps = 0; const need = 6;
+  const draw = () => { egg.innerHTML = ''; egg.appendChild(eggCanvas(style, Math.floor(taps * 6 / need))); };
+  draw();
+  egg.onclick = () => {
+    if (taps >= need) return; taps++; sfx('crack'); buzz(15); egg.classList.remove('shake'); void egg.offsetWidth; egg.classList.add('shake'); draw();
+    const [x, y] = elCenter(egg); burst(x, y - 30, 'sparkle', 3, { up: true, sc: 3 });
+    $('.egg-glow', s).style.opacity = taps / need;
+    if (taps >= need) setTimeout(reveal, 450);
   };
-  send.onclick=()=>{const t=tx.value.trim();if(!t)return;stopRecognition();openTalk();sendMessage(t);};
-  w.querySelector('#rback').onclick=()=>{stopRecognition();openTalk();};
+  egg.focus({ preventScroll: true });
+  function reveal() {
+    sfx('hatch'); buzz([30, 50, 30]); const [x, y] = elCenter(egg); confetti(x, y, 80, 1.1); burst(x, y, 'star', 14, { sc: 4 });
+    $('.rays', s).style.opacity = 1; $('.rays', s).style.transition = 'opacity .5s';
+    egg.remove();
+    const pc = petCanvas({ eyes: 'happy', mouth: 'open', arm: 'both', stage: 'adult' }, 4, Object.assign({}, genome)); pc.className = 'reveal-pet px'; pc.style.position = 'relative'; $('.egg-stage', s).appendChild(pc);
+    const sp = E.PRESETS[genome.base]; const label = sp ? sp.name : 'Mystery mix';
+    $('#hh', s).innerHTML = `<span class="rarity ${rarity}">${rarity}</span>`; $('#hs', s).innerHTML = `It's a <b>${esc(label.toLowerCase())}</b>${rarity === 'epic' || rarity === 'legendary' ? ' — a one-of-a-kind hybrid!' : '!'}`;
+    setTimeout(() => { pc.replaceWith(Object.assign(petCanvas({ stage: 'adult' }, 4, genome), { className: 'reveal-pet px', style: 'animation:parade 1.6s ease-in-out infinite;position:relative' })); }, 1400);
+    $('#hf', s).innerHTML = `<button class="btn btn-lg btn-mint btn-block" data-keep>Keep this one!</button><div class="btnrow" style="margin-top:0"><button class="btn btn-white" data-tweak>Tweak colors</button><button class="btn btn-white" data-again>Another egg</button></div>`;
+    OB.genome = genome; OB.rarity = rarity;
+    $('[data-keep]', s).onclick = () => { sfx('pop'); obNaming(); };
+    $('[data-tweak]', s).onclick = () => { sfx('pop'); obEditor('colors'); };
+    $('[data-again]', s).onclick = () => { sfx('pop'); obEggPick(); };
+    say('Your egg hatched! It is a ' + rarity + ' ' + label);
+  }
+  $('[data-back]', s).onclick = () => obEggPick();
 }
 
-/* ---------------- play ---------------- */
-VIEWS.play={
-  html:()=>`${topbar('Play',{back:false})}<div class="scroll stack" style="padding-top:8px">
-   <div class="game-card"><canvas class="scene" id="scene" role="img" aria-label="Preview: toys hidden around the room"></canvas>
-    <div class="body stack"><h2>Find the toy</h2><p class="muted">Three toys are hiding in plain sight around ${esc(S.save.pet.name)}'s room. Tap them in the picture, or pick places from a list. No timer, no penalties.</p>
-     <div class="chips"><span class="tag">About 2 minutes</span><span class="tag">Tap or list</span><span class="tag ok">Works offline</span></div>
-     <button class="btn primary block" data-start>Start</button></div></div>
-   <p class="small muted">More games arrive after this one is tested.</p>
-  </div>${tabs('play')}`,
-  bind(){
-    mountScene('#scene',{H:120,toys:[{kind:'ball',spot:'shelf'},{kind:'yarn',spot:'plant'},{kind:'bone',spot:'bed'}]});setPet('idle');
-    app.querySelector('[data-start]').onclick=()=>go(S.save.seenHowTo?'game':'howto');
-  }
-};
-VIEWS.howto={
-  html:()=>`${topbar('How to play')}<div class="scroll stack" style="padding-top:8px">
-   <h2>Find the toy</h2>
-   <ol class="stack" style="padding-left:20px;margin:0">
-    <li><b>Look around the room.</b> Three toys are visible somewhere — on the shelf, by the plant, in the bed…</li>
-    <li><b>Tap a toy</b>, or open <b>Search a spot</b> and choose a place. Both count the same.</li>
-    <li><b>Stuck?</b> Hints outline where the next toy is. Wrong guesses cost nothing.</li>
-   </ol>
-   <p class="small muted">Leaving mid-round ends that round; nothing else is lost.</p>
-  </div><div class="foot"><button class="btn block" data-try>Try one first</button><button class="btn primary block" data-go2>Start</button></div>`,
-  bind(){app.querySelector('[data-try]').onclick=()=>{S.save.seenHowTo=true;persist();go('game',{practice:true});};
-    app.querySelector('[data-go2]').onclick=()=>{S.save.seenHowTo=true;persist();go('game');};}
-};
-VIEWS.game={
-  html:()=>`<div class="topbar"><button class="btn ghost" data-exit style="min-height:44px">Exit</button><div class="title"><span class="counter" id="cnt" aria-live="polite"></span></div><button class="btn ghost" data-hint style="min-height:44px">Hint</button></div>
-   <div class="scene-wrap"><canvas class="scene" id="scene" role="img" aria-label="${esc(S.save.pet.name)}'s room with toys hidden in it"></canvas></div>
-   <div class="scroll stack" style="padding-top:12px"><p id="gmsg" aria-live="polite">${S.params.practice?'Practice: find one toy.':'Find three toys.'}</p>
-    <div class="label" id="sl">Search a spot</div><div class="toylist" role="group" aria-labelledby="sl" id="spots"></div></div>`,
-  bind(){
-    const spots=['window','shelf','plant','bed','basket','rug'];
-    const pickSpots=spots.slice().sort(()=>Math.random()-.5);
-    const kinds=['ball','bone','yarn'];
-    const n=S.params.practice?1:3;
-    const toys=kinds.slice(0,n).map((k,i)=>({kind:k,spot:pickSpots[i],found:false}));
-    const G={session_id:uid(),toys,started:Date.now(),done:false};
-    const sc=mountScene('#scene',{H:180,toys,petDx:0});setPet('idle');
-    const cnt=app.querySelector('#cnt'),msg=app.querySelector('#gmsg'),list=app.querySelector('#spots');
-    const paint=()=>{const f=toys.filter(t=>t.found).length;cnt.textContent=`${f} / ${n} found`;
-      list.innerHTML=spots.map(s=>{const t=toys.find(x=>x.spot===s&&x.found);return `<button data-s="${s}" class="${t?'found':''}">${t?'✓ '+A.TOYS[t.kind].name:'Look '+esc(sc.spots?sc.spots[s].label:s)}</button>`;}).join('');
-      list.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>search(b.dataset.s));};
-    function search(s){
-      if(G.done)return;const t=toys.find(x=>x.spot===s&&!x.found);
-      if(t){t.found=true;sc.hint=null;blip(990);vib(20);setPet('play',900);msg.textContent=`Found the ${A.TOYS[t.kind].name.toLowerCase()} ${sc.spots[s].label}!`;}
-      else{const done=toys.find(x=>x.spot===s&&x.found);msg.textContent=done?'Already found that one.':`Nothing ${sc.spots[s].label}. Keep looking.`;}
-      paint();
-      if(toys.every(x=>x.found)){G.done=true;G.status='completed';setTimeout(()=>finish(),reduce()?200:900);}
+/* ---------------- Editor (design + real-pet + later "edit look") ---------------- */
+const ED_TABS = [['species', 'Species'], ['colors', 'Colors'], ['ears', 'Ears'], ['tail', 'Tail'], ['eyes', 'Eyes'], ['mouth', 'Mouth'], ['pattern', 'Pattern'], ['extra', 'Extras'], ['wings', 'Wings'], ['body', 'Body'], ['head', 'Head'], ['hair', 'Hair']];
+function obEditor(startTab, opts) {
+  opts = opts || {};
+  const real = OB.path === 'real' && !opts.edit;
+  let tab = startTab || 'species';
+  let g = JSON.parse(JSON.stringify(opts.edit ? S.pet.genome : OB.genome));
+  let palIdx = 0;
+  const s = screen('ed', `<div class="ob-inner" style="padding-bottom:calc(var(--sb) + 14px)">${opts.edit ? `<div class="ob-top"><button class="iconbtn" data-back aria-label="Cancel">${SVG.back}</button><h1 style="flex:1;text-align:center;font-size:22px">Edit look</h1><span style="width:44px"></span></div>` : obTop(2, true)}
+    ${real ? '<div class="notice pink" style="margin:6px 0 0"><span>💗</span><span>Pick the closest look, then match colors. This makes a <b>fictional companion</b> inspired by your pet — it can\'t know how your real pet is doing.</span></div>' : `<h1 class="ob-h" style="font-size:26px">${opts.edit ? '' : 'Design your pet'}</h1>`}
+    <div class="ed-preview"><div class="stagepick"></div><button class="btn btn-yellow btn-sm dice" data-dice aria-label="Mystery mix: randomize everything">🎲 Mystery mix</button></div>
+    <div class="ed-tabs" role="tablist" aria-label="Customize parts">${ED_TABS.map(([k, n]) => `<button role="tab" data-tab="${k}" aria-selected="${k === tab}">${n}</button>`).join('')}</div>
+    <div class="ed-body" id="edb"></div>
+    <div class="ob-foot" style="margin-top:8px"><button class="btn btn-lg btn-block" data-next>${opts.edit ? 'Save look' : 'Looks perfect!'}</button></div></div>`);
+  const prev = $('.ed-preview', s);
+  function drawPrev(bounce) { $$('canvas', prev).forEach(c => c.remove()); const c = petCanvas({ eyes: bounce ? 'happy' : 'open' }, 4, g); c.style.cssText = 'width:256px;height:256px;margin-top:-30px'; prev.prepend(c); if (bounce) c.animate([{ transform: 'scale(1,1)' }, { transform: 'scale(1.12,.88)' }, { transform: 'scale(.94,1.06)' }, { transform: 'scale(1,1)' }], { duration: 380, easing: 'ease-out' }); }
+  const thumb = (gg, st) => { const c = E.renderPet(gg, Object.assign({ stage: 'adult' }, st || {}), 1); const b = document.createElement('canvas'); b.width = 64; b.height = 64; b.className = 'px'; b.getContext('2d').drawImage(c, 0, 0); return b; };
+  function body() {
+    const B = $('#edb', s); B.innerHTML = '';
+    if (tab === 'species') {
+      B.innerHTML = `<div class="optgrid" role="group" aria-label="Species">${Object.keys(E.PRESETS).map(id => `<button class="opt" data-sp="${id}" aria-pressed="${g.base === id}"><span data-th></span>${E.PRESETS[id].name}</button>`).join('')}</div>`;
+      $$('[data-sp]', B).forEach(b => { b.querySelector('[data-th]').replaceWith(thumb(E.presetGenome(b.dataset.sp, 0))); b.onclick = () => { sfx('pop'); palIdx = g.base === b.dataset.sp ? palIdx + 1 : 0; g = E.presetGenome(b.dataset.sp, palIdx); drawPrev(true); body(); }; });
+      return;
     }
-    function finish(){
-      if(!S.params.practice){recordAction('game_complete',{game:'find_toy',session_id:G.session_id},'game-'+G.session_id);
-        S.save.games.push({id:G.session_id,game_version:1,found_ids:toys.map(t=>t.kind),status:'completed',at:Date.now()});persist();}
-      go('result',{toys:toys.map(t=>({kind:t.kind,spot:t.spot,label:sc.spots[t.spot].label})),session_id:G.session_id,practice:!!S.params.practice},{replace:true});
+    if (tab === 'colors') {
+      const rows = [['base', 'Fur / skin', E.SWATCHES.base], ['belly', 'Belly & muzzle', E.SWATCHES.belly], ['pattern', 'Markings', E.SWATCHES.pattern], ['accent', 'Inner ears, fins & wings', E.SWATCHES.accent], ['eye', 'Eyes', E.SWATCHES.eye], ['horn', 'Horns, beak & antlers', E.SWATCHES.horn]];
+      B.innerHTML = (E.PRESETS[g.base] ? `<div class="swrow"><h4>Preset palettes</h4><div class="optrow">${E.PRESETS[g.base].pals.map((p, i) => `<button class="chip" data-pal="${i}" aria-label="Palette ${i + 1}"><span style="display:inline-flex;gap:2px">${[p.base, p.belly, p.pattern, p.accent].map(c => `<i style="width:12px;height:12px;border-radius:4px;background:${c};display:inline-block;box-shadow:inset 0 0 0 1px rgba(0,0,0,.1)"></i>`).join('')}</span></button>`).join('')}</div></div>` : '') +
+        rows.map(([k, n, list]) => `<div class="swrow"><h4>${n}</h4><div class="swatches">${list.map(c => `<button class="sw" style="background:${c}" data-k="${k}" data-c="${c}" aria-label="${n} ${c}" aria-pressed="${(g.colors[k] || '').toLowerCase() === c}"></button>`).join('')}<label class="sw custom" aria-label="Custom ${n} color"><input type="color" data-k="${k}" value="${g.colors[k] || '#ffffff'}"></label></div></div>`).join('') +
+        `<div class="swrow"><h4>Options</h4><div class="optrow"><button class="chip" data-tg="belly" aria-pressed="${!!g.belly}">Light belly</button><button class="chip" data-tg="cheeks" aria-pressed="${g.cheeks !== false}">Rosy cheeks</button></div></div>`;
+      $$('.sw[data-c]', B).forEach(b => b.onclick = () => { sfx('tap'); g.colors[b.dataset.k] = b.dataset.c; drawPrev(); $$('.sw[data-k="' + b.dataset.k + '"]', B).forEach(x => x.setAttribute('aria-pressed', x === b)); });
+      $$('input[type=color]', B).forEach(i => i.oninput = () => { g.colors[i.dataset.k] = i.value; drawPrev(); });
+      $$('[data-pal]', B).forEach(b => b.onclick = () => { sfx('tap'); g.colors = Object.assign({}, E.PRESETS[g.base].pals[+b.dataset.pal]); drawPrev(true); body(); });
+      $$('[data-tg]', B).forEach(b => b.onclick = () => { sfx('tap'); const k = b.dataset.tg; if (k === 'cheeks') g.cheeks = g.cheeks === false; else g[k] = !g[k]; b.setAttribute('aria-pressed', k === 'cheeks' ? g.cheeks !== false : !!g[k]); drawPrev(); });
+      return;
     }
-    setTimeout(paint,0);
-    const c=app.querySelector('#scene');
-    c.addEventListener('pointerup',e=>{const r=c.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*sc.W,y=(e.clientY-r.top)/r.height*sc.H;
-      let best=null,bd=1e9;for(const s of spots){const p=sc.spots[s];const d=Math.hypot(x-(p.x+7),y-(p.y+7));if(d<bd){bd=d;best=s;}}
-      if(bd<=14)search(best);else{msg.textContent='Nothing there. Keep looking.';}});
-    app.querySelector('[data-hint]').onclick=()=>{const t=toys.find(x=>!x.found);if(t){sc.hint=t.spot;msg.textContent=`Hint: try ${sc.spots[t.spot].label}.`;}};
-    app.querySelector('[data-exit]').onclick=async()=>{if(G.done)return;if(await confirmDialog({title:'Leave this round?',body:'Toys found in this round won’t be saved. Your pet and everything else stay as they are.',verb:'Leave round'})){history_.length=0;go('play',{},{replace:true});}};
-    document.addEventListener('visibilitychange',()=>{},{once:true}); // no timers to pause: the round simply waits
+    const list = E.PARTS[tab];
+    B.innerHTML = `<div class="optgrid" role="group" aria-label="${tab}">${list.map(([k, n]) => `<button class="opt" data-v="${k}" aria-pressed="${g[tab] === k}"><span data-th></span>${n}</button>`).join('')}</div>`;
+    $$('[data-v]', B).forEach(b => { const gg = Object.assign({}, g, { [tab]: b.dataset.v }); b.querySelector('[data-th]').replaceWith(thumb(gg)); b.onclick = () => { sfx('pop'); g[tab] = b.dataset.v; if (g.base !== 'mix' && E.PRESETS[g.base] && JSON.stringify(E.PRESETS[g.base].g[tab]) !== JSON.stringify(g[tab])) g.base = 'mix'; drawPrev(true); $$('[data-v]', B).forEach(x => x.setAttribute('aria-pressed', x === b)); }; });
   }
-};
-VIEWS.result={
-  html:()=>{const p=S.save.pet,t=S.params.toys;const names=t.map(x=>A.TOYS[x.kind].name.toLowerCase());
-   const line=`You and ${p.name} found the ${names.length>1?names.slice(0,-1).join(', ')+' and '+names.slice(-1):names[0]}.`;
-   S.params.line=line;
-   return `<div class="scene-wrap"><canvas class="scene" id="scene" role="img" aria-label="${esc(p.name)} plays with the ball"></canvas></div>
-   <div class="scroll stack" style="padding-top:16px"><h1>${S.params.practice?'Practice done':'All found!'}</h1><p>${esc(line)}</p>
-   ${S.params.practice?'<p class="small muted">Practice rounds aren’t saved.</p>':`<div id="saveline"><button class="btn block" data-mem>Save as a memory</button></div>`}</div>
-   <div class="foot"><button class="btn primary block" data-again>Play again</button><button class="btn block" data-home>Back home</button></div>`;},
-  bind(){
-    mountScene('#scene',{H:150});setPet('play',reduce()?600:2400);
-    const m=app.querySelector('[data-mem]');if(m)m.onclick=async()=>{
-      if(S.save.memories.some(x=>x.session_id===S.params.session_id))return;
-      S.save.memories.unshift({id:uid(),source_type:'together',session_id:S.params.session_id,text:S.params.line+' (Find the toy)',user_confirmed:true,retrieval_enabled:true,created:Date.now()});
-      app.querySelector('#saveline').innerHTML=(await persist())?'<p class="small" role="status">Saved to Memories → Together.</p>':'<p class="small" role="alert">Couldn’t save on this device.</p>';};
-    app.querySelector('[data-again]').onclick=()=>go('game',{},{replace:true});
-    app.querySelector('[data-home]').onclick=()=>{history_.length=0;go('home',{},{replace:true});};
+  drawPrev(); body();
+  $$('[data-tab]', s).forEach(b => b.onclick = () => { sfx('tap'); tab = b.dataset.tab; $$('[data-tab]', s).forEach(x => x.setAttribute('aria-selected', x === b)); body(); });
+  $('[data-dice]', s).onclick = () => { sfx('boing'); g = E.randomGenome(Math.floor(Math.random() * 1e9), choice(['rare', 'epic', 'epic', 'legendary'])); drawPrev(true); body(); const [x, y] = elCenter(prev); burst(x, y, 'sparkle', 8, { sc: 3 }); };
+  $('[data-next]', s).onclick = () => {
+    sfx('pop');
+    if (opts.edit) { S.pet.genome = g; persistNow(); toast('New look saved!', 'star'); goMain('pet'); return; }
+    OB.genome = g; OB.rarity = OB.rarity || (g.base === 'mix' ? 'epic' : 'common'); obNaming();
+  };
+  $('[data-back]', s).onclick = () => { if (opts.edit) goMain('pet'); else if (OB.path === 'egg') obEggPick(); else obChoose(); };
+}
+function obNaming() {
+  const real = OB.path === 'real';
+  if (!OB.name) OB.name = real ? '' : choice(NAMES);
+  const s = screen('ed', `<div class="ob-inner">${obTop(3, true)}
+    <div style="display:grid;place-items:center;height:150px;flex:none" id="np"></div>
+    <div class="ed-body" style="padding-top:2px">
+      <div class="field"><label for="nm">${real ? 'Their name' : 'Name your pet'}</label><div class="namerow"><input id="nm" class="inp" maxlength="16" value="${esc(OB.name)}" placeholder="${real ? 'e.g. Milo' : 'Name'}" autocomplete="off">${real ? '' : `<button class="iconbtn" data-rn aria-label="Random name">${SVG.dice}</button>`}</div></div>
+      <div class="field"><label for="ad">What should ${real ? 'they' : 'it'} call you?</label><input id="ad" class="inp" maxlength="20" value="${esc(OB.addressAs)}" placeholder="e.g. Sam, bestie, captain" autocomplete="off"></div>
+      <div class="field"><label id="plab">Personality</label><div class="persona" role="group" aria-labelledby="plab">${Object.entries(PERSONALITIES).map(([k, p]) => `<button data-pe="${k}" aria-pressed="${OB.personality === k}"><span class="e">${p.e}</span>${p.name}<small>${p.d}</small></button>`).join('')}</div></div>
+      ${real ? `<div class="field"><label id="hlab">Their habits (pick any)</label><div class="optrow" role="group" aria-labelledby="hlab">${HABITS.map(h => `<button class="chip" data-hb="${esc(h)}" aria-pressed="${OB.habits.includes(h)}">${esc(h)}</button>`).join('')}</div></div>
+      <div class="field"><label for="bio">Anything else? (optional)</label><textarea id="bio" class="inp" rows="3" maxlength="300" placeholder="e.g. Loves the blue blanket, snores softly, lives with my parents in Lyon.">${esc(OB.bio)}</textarea></div>
+      <div class="notice pink"><span>💗</span><span>Your PIP will act like these habits, but it's a <b>fictional companion</b> — not your real pet, and it won't claim to know how they are.</span></div>` : ''}
+    </div>
+    <div class="ob-foot"><button class="btn btn-lg btn-block" data-next>Meet ${real ? 'them' : 'my pet'}!</button></div></div>`);
+  const np = $('#np', s); const pc = petCanvas({}, 3, OB.genome); pc.style.cssText = 'width:192px;height:192px;animation:parade 1.6s ease-in-out infinite'; np.appendChild(pc);
+  const nm = $('#nm', s);
+  nm.oninput = () => { OB.name = nm.value; };
+  $('#ad', s).oninput = e => OB.addressAs = e.target.value;
+  const rn = $('[data-rn]', s); if (rn) rn.onclick = () => { sfx('boing'); OB.name = choice(NAMES.filter(n => n !== OB.name)); nm.value = OB.name; };
+  $$('[data-pe]', s).forEach(b => b.onclick = () => { sfx('tap'); OB.personality = b.dataset.pe; $$('[data-pe]', s).forEach(x => x.setAttribute('aria-pressed', x === b)); });
+  $$('[data-hb]', s).forEach(b => b.onclick = () => { sfx('tap'); const h = b.dataset.hb; OB.habits = OB.habits.includes(h) ? OB.habits.filter(x => x !== h) : OB.habits.concat(h); b.setAttribute('aria-pressed', OB.habits.includes(h)); });
+  const bio = $('#bio', s); if (bio) bio.oninput = () => OB.bio = bio.value;
+  $('[data-next]', s).onclick = () => {
+    OB.name = nm.value.trim(); if (!OB.name) { nm.focus(); nm.animate([{ transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'none' }], { duration: 250 }); toast('Every pet needs a name!'); sfx('bad'); return; }
+    sfx('pop'); obMeet();
+  };
+  $('[data-back]', s).onclick = () => { if (OB.path === 'egg') obEggPick(); else obEditor('colors'); };
+}
+function obMeet() {
+  const foods = FOODS.slice(); const fav = choice(foods); const dis = choice(foods.filter(f => f !== fav && f !== 'apple'));
+  const pet = { id: uid(), name: OB.name, genome: OB.genome, personality: OB.personality, mode: OB.path === 'real' ? 'real' : 'original', origin: OB.path, rarity: OB.rarity || 'common', addressAs: OB.addressAs.trim(), habits: OB.habits.slice(), bio: OB.bio.trim(), fav, dislike: dis, born: Date.now() };
+  S = freshSave(pet); ensureQuests();
+  window.Frame && Frame.tone('dark');
+  const s = screen('ob', `<div class="ob-inner">${obTop(4, false)}<h1 class="ob-h">Say hello to ${esc(pet.name)}!</h1><p class="ob-sub" id="ms">Give ${esc(pet.name)} a gentle rub — drag your finger back and forth.</p>
+    <div class="meet-stage"><div class="rays" aria-hidden="true" style="opacity:.5"></div></div>
+    <div class="prog" style="margin:0 10px" aria-hidden="true"><i id="mp" style="width:0%"></i></div>
+    <div class="ob-foot" id="mf"><button class="btn btn-white btn-block" data-skip>Skip — just say hi</button></div></div>`);
+  obBG(s);
+  const st = $('.meet-stage', s); let c = petCanvas({}, 4); c.classList.add('big'); st.appendChild(c);
+  const hand = document.createElement('div'); hand.className = 'hint-hand'; hand.textContent = '👆'; hand.style.cssText = 'left:50%;top:60%'; st.appendChild(hand);
+  const bub = document.createElement('div'); bub.className = 'speech pop'; bub.style.top = '8%'; bub.textContent = `Hi${pet.addressAs ? ' ' + pet.addressAs : ''}! I'm ${pet.name}!`; st.appendChild(bub);
+  let prog = 0, last = null, down = false, done = false;
+  const setFace = (eyes, mouth) => { const n = petCanvas({ eyes, mouth }, 4); n.className = c.className; c.replaceWith(n); c = n; bind(); };
+  function bind() {
+    c.onpointerdown = e => { down = true; last = [e.clientX, e.clientY]; c.setPointerCapture(e.pointerId); hand.remove(); };
+    c.onpointermove = e => { if (!down || done) return; const d = Math.hypot(e.clientX - last[0], e.clientY - last[1]); last = [e.clientX, e.clientY]; prog += d / 9; if (Math.random() < d / 60) { const [x, y] = appXY(e.clientX, e.clientY); burst(x, y - 20, 'heart', 1, { up: true, sc: 3, g: -.02 }); sfx('heart'); } $('#mp', s).style.width = Math.min(100, prog) + '%'; if (prog > 30 && c.dataset.f !== 'h') { c.dataset.f = 'h'; setFace('happy', 'open'); sfx('purr'); } if (prog >= 100) finish(); };
+    c.onpointerup = c.onpointercancel = () => { down = false; };
+    c.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { prog += 34; $('#mp', s).style.width = Math.min(100, prog) + '%'; const [x, y] = elCenter(c); burst(x, y - 40, 'heart', 3, { up: true, sc: 3 }); if (prog >= 100) finish(); } };
+    c.tabIndex = 0; c.setAttribute('role', 'button'); c.setAttribute('aria-label', 'Rub ' + pet.name + ' (press Enter)');
   }
-};
+  bind();
+  function finish() {
+    if (done) return; done = true; down = false; setFace('heart', 'open'); sfx('levelup'); confetti(null, null, 90); bub.textContent = 'We\'re going to be best friends!'; bub.classList.remove('pop'); void bub.offsetWidth; bub.classList.add('pop');
+    $('#ms', s).textContent = 'You made a new friend!';
+    S.stats.pets += 3; S.needs.love = 95; S.ach.hello = Date.now();
+    $('#mf', s).innerHTML = `<button class="btn btn-lg btn-mint btn-block" data-home>Take ${esc(pet.name)} home</button>`;
+    $('[data-home]', s).onclick = () => {
+      sfx('pop'); persistNow();
+      const m = modal(`<div class="ribbon">STARTER GIFT</div><div class="art" style="height:90px;margin-top:-10px;display:flex;gap:6px;align-items:center;justify-content:center">${['apple', 'cookie', 'ball'].map(i => `<img src="${itemURL(i, 3)}" alt="" style="width:60px">`).join('')}</div><h2>Welcome home!</h2><p>Here's 60 coins, a few snacks, a ball, a party hat and a scarf to get you started. Earn more by playing — everything in PIP is earned, never bought.</p><div class="btns"><button class="btn btn-yellow btn-lg" data-close>Let's go!</button></div>`, { label: 'Starter gift', onClose: () => goMain('home') });
+    };
+  }
+  $('[data-skip]', s).onclick = () => { prog = 100; finish(); };
+}
 
-/* ---------------- memories ---------------- */
-VIEWS.memories={
-  html:()=>{const f=S.params.filter||'all',q=(S.params.q||'').toLowerCase();
-  const items=S.save.memories.filter(m=>(f==='all'||m.source_type===f)&&(!q||m.text.toLowerCase().includes(q)));
-  return `${topbar('Memories',{back:false,right:`<button class="iconbtn" data-add aria-label="Add a memory">+</button>`})}
-  <div class="scroll stack" style="padding-top:4px">
-   <div class="field"><label class="sr-only" for="mq">Search memories</label><input id="mq" type="search" placeholder="Search memories" value="${esc(S.params.q||'')}"></div>
-   <div class="chips" role="radiogroup" aria-label="Filter">${[['all','All'],['you_shared','You shared'],['together','Together']].map(([k,l])=>`<button class="chip" role="radio" aria-checked="${f===k}" data-f="${k}">${l}</button>`).join('')}</div>
-   ${items.length?`<div class="list">${items.map(m=>`<button class="li" data-id="${m.id}"><div class="grow"><b>${esc(m.text)}</b><span>${m.source_type==='together'?'Together':'You shared'} · ${new Date(m.created).toLocaleDateString()}${m.retrieval_enabled?'':' · not used in chats'}</span></div>${ICON.chev}</button>`).join('')}</div>`
-     :`<div class="empty"><p><b>${S.save.memories.length?'Nothing matches.':'No memories yet.'}</b></p><p class="small">${S.save.memories.length?'Try another word or filter.':`When you tell ${esc(S.save.pet.name)} something worth keeping, you can choose to save it here. Only saved memories are used in conversations.`}</p></div>`}
-   <div class="li" style="cursor:default"><div class="grow"><b>Offer to save things I mention</b><span style="white-space:normal">When off, ${esc(S.save.pet.name)} never proposes memories.</span></div><button class="switch" role="switch" aria-checked="${S.save.settings.offerMemories}" data-offer aria-label="Offer to save memories"></button></div>
-   <p class="small muted">Stored on this device only.</p>
-  </div>${tabs('memories')}`;},
-  bind(){
-    const q=app.querySelector('#mq');q.oninput=()=>{S.params.q=q.value;const pos=q.selectionStart;render();const n=app.querySelector('#mq');n.focus();n.setSelectionRange(pos,pos);};
-    app.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{S.params.filter=b.dataset.f;render();});
-    app.querySelectorAll('[data-id]').forEach(b=>b.onclick=()=>go('memory',{id:b.dataset.id}));
-    app.querySelector('[data-add]').onclick=()=>go('memory',{id:null,edit:true});
-    const o=app.querySelector('[data-offer]');o.onclick=()=>{S.save.settings.offerMemories=!S.save.settings.offerMemories;persist();o.setAttribute('aria-checked',String(S.save.settings.offerMemories));};
-  }
-};
-VIEWS.memory={
-  html:()=>{const m=S.save.memories.find(x=>x.id===S.params.id);const isNew=!m;const edit=S.params.edit||isNew;
-  return `${topbar(isNew?'New memory':'Memory')}<div class="scroll stack" style="padding-top:8px">
-   ${edit?`<div class="field"><label class="label" for="mt">${isNew?'Something you want '+esc(S.save.pet.name)+' to remember':'Edit memory'}</label><textarea id="mt" maxlength="200">${esc(m?m.text:'')}</textarea><span class="hint">Max 200 characters. Write it as a fact, e.g. “My sister walks Milo on Sundays.”</span><span class="err" id="me" aria-live="polite"></span></div>`
-   :`<p style="font-size:18px">${esc(m.text)}</p>`}
-   ${m?`<p class="small muted">${m.source_type==='together'?'Something you did together in PIP':'Something you shared'} · saved ${new Date(m.created).toLocaleString()}${m.updated?' · edited '+new Date(m.updated).toLocaleDateString():''}</p>
-   <div class="li" style="cursor:default"><div class="grow"><b>Use in conversations</b><span style="white-space:normal">Off keeps it here but never sends it to the model.</span></div><button class="switch" role="switch" aria-checked="${m.retrieval_enabled}" data-use aria-label="Use in conversations"></button></div>`:''}
-  </div><div class="foot">${edit?`<button class="btn primary block" data-save>Save</button>`:`<div class="row"><button class="btn" style="flex:1" data-edit>Edit</button><button class="btn" style="flex:1" data-export>Export text</button></div><button class="btn danger block" data-forget>Forget this memory</button>`}</div>`;},
-  bind(){
-    const m=S.save.memories.find(x=>x.id===S.params.id);
-    const sv=app.querySelector('[data-save]');if(sv)sv.onclick=async()=>{const t=app.querySelector('#mt').value.trim();if(!t){app.querySelector('#me').textContent='Write something, or go back.';return;}
-      if(m){m.text=t;m.updated=Date.now();}else S.save.memories.unshift({id:uid(),source_type:'you_shared',text:t,user_confirmed:true,retrieval_enabled:true,created:Date.now()});
-      if(await persist()){toast('Memory saved.');back();}else toast('Couldn’t save on this device.');};
-    const u=app.querySelector('[data-use]');if(u)u.onclick=()=>{m.retrieval_enabled=!m.retrieval_enabled;persist();u.setAttribute('aria-checked',String(m.retrieval_enabled));};
-    const e=app.querySelector('[data-edit]');if(e)e.onclick=()=>go('memory',{id:m.id,edit:true},{replace:true});
-    const x=app.querySelector('[data-export]');if(x)x.onclick=()=>download(`memory-${m.id.slice(0,8)}.txt`,m.text+'\n','text/plain');
-    const f=app.querySelector('[data-forget]');if(f)f.onclick=async()=>{if(!await confirmDialog({title:'Forget this memory?',body:`${S.save.pet.name} will stop using it right away. Copies you exported or screenshots aren’t affected.`,verb:'Forget memory',danger:true}))return;
-      S.save.memories=S.save.memories.filter(y=>y.id!==m.id);
-      if(await persist()){toast('Forgotten.');back();}else toast('Couldn’t update this device. Try again.');};
-  }
-};
+/* ============================== BACKUP ============================== */
+function exportBackup() {
+  persistNow(); const blob = new Blob([JSON.stringify({ app: 'pip', v: 2, exported: new Date().toISOString(), save: S }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'pip-' + (S.pet.name || 'pet').toLowerCase().replace(/\W+/g, '-') + '-backup.json'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  toast('Backup downloaded', 'note');
+}
+function importBackup() {
+  const i = document.createElement('input'); i.type = 'file'; i.accept = 'application/json,.json';
+  i.onchange = async () => {
+    const f = i.files[0]; if (!f) return;
+    try { const j = JSON.parse(await f.text()); const sv = j.save || j; if (!sv.pet || !sv.pet.genome) throw new Error('bad'); if (S && !(await confirmBox('Replace current pet?', 'Importing will replace ' + S.pet.name + ' on this device with ' + sv.pet.name + ' from the backup.', 'Import', true))) return; S = migrate(sv); S.lastTick = Date.now(); persistNow(); toast('Welcome back, ' + S.pet.name + '!', 'heart'); goMain('home'); }
+    catch (e) { toast('That file isn\'t a PIP backup.'); sfx('bad'); }
+  };
+  i.click();
+}
 
-/* ---------------- pet / settings / backup / privacy ---------------- */
-VIEWS.pet={
-  html:()=>{const p=S.save.pet;return `${topbar('Pet',{back:false})}<div class="scroll stack" style="padding-top:4px">
-   <div class="row"><div class="preview" style="padding:6px"><canvas id="pv" width="52" height="52" role="img" aria-label="${esc(p.name)}"></canvas></div>
-   <div><h2>${esc(p.name)}</h2><p class="small muted">${p.mode==='real'?'Fictional companion inspired by your pet':'Original pet'} · ${PERSONALITIES[p.personality].name}</p></div></div>
-   ${p.mode==='real'?`<p class="small" style="background:#ece6d8;padding:10px 12px;border-radius:12px">${esc(p.name)} in PIP is a character you set up. It doesn’t receive anything from your real pet and can’t tell you how they are.</p>`:''}
-   <div class="list">
-    ${[['appearance','Appearance','Species, coat, ears, markings'],['personality','Name & personality',PERSONALITIES[p.personality].name+(p.bio?' · '+p.bio:'')],['settings','Settings','Motion, sound, vibration, voice'],['backup','Backup','Export or restore your pet'],['privacy','Data & privacy','What’s stored, and deleting it']]
-      .map(([k,t,s])=>`<button class="li" data-k="${k}"><div class="grow"><b>${t}</b><span>${esc(s)}</span></div>${ICON.chev}</button>`).join('')}
-   </div></div>${tabs('pet')}`;},
-  bind(){A.drawPetIcon(app.querySelector('#pv'),S.save.pet.appearance,1.6);
-    app.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>{const k=b.dataset.k,p=S.save.pet;
-      if(k==='appearance'){S.draft={appearance:Object.assign({},p.appearance),undo:[],suggestion:null};go('appearance',{edit:true});}
-      else if(k==='personality'){S.draft={appearance:p.appearance,name:p.name,addressAs:p.addressAs||'',personality:p.personality,bio:p.bio||''};go('personality',{edit:true});}
-      else go(k);});}
-};
-VIEWS.settings={
-  html:()=>{const s=S.save.settings;const sw=(k,t,d)=>`<div class="li" style="cursor:default"><div class="grow"><b>${t}</b><span style="white-space:normal">${d}</span></div><button class="switch" role="switch" aria-checked="${!!s[k]}" data-s="${k}" aria-label="${t}"></button></div>`;
-  return `${topbar('Settings')}<div class="scroll stack"><div class="list">
-   ${sw('reduceMotion','Reduce motion','Static poses with text descriptions instead of hopping and bouncing.')}
-   ${sw('sound','Sound effects','Small sounds for petting, feeding and finding toys. Off by default.')}
-   ${sw('haptics','Vibration','Short taps where the device supports it.')}
-   ${sw('voiceConsent','Voice input','Allow the browser’s speech service to turn your voice into text. You always review the text first.')}
-   ${sw('offerMemories','Offer to save memories','Let your pet propose things to remember. Nothing is saved without you.')}
-   </div>
-   <p class="small muted">Microphone permission is managed by your browser; this switch only controls whether PIP asks for it. Notifications aren’t available in this web beta.</p></div>`;},
-  bind(){app.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{const k=b.dataset.s;S.save.settings[k]=!S.save.settings[k];persist();b.setAttribute('aria-checked',String(S.save.settings[k]));});}
-};
-async function checksum(obj){const buf=new TextEncoder().encode(JSON.stringify(obj));const h=await crypto.subtle.digest('SHA-256',buf);return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('');}
-function download(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);}
-async function exportBackup(){const data=JSON.parse(JSON.stringify(S.save));const body={app:'pip',schema_version:SCHEMA,exported_at:new Date().toISOString(),data};
-  body.checksum=await checksum(data);download(`pip-${(S.save.pet&&S.save.pet.name||'pet').replace(/\W+/g,'-').toLowerCase()}-${new Date().toISOString().slice(0,10)}.json`,JSON.stringify(body,null,2),'application/json');
-  S.save.lastExport=Date.now();await persist();}
-function pickBackup(){const i=document.createElement('input');i.type='file';i.accept='application/json,.json';i.onchange=async()=>{const f=i.files[0];if(!f)return;
-  let b;try{b=JSON.parse(await f.text());}catch(e){toast('That file isn’t a PIP backup (couldn’t read JSON). Nothing was changed.');return;}
-  if(b.app!=='pip'||!b.data||!b.data.pet){toast('That file isn’t a PIP backup. Nothing was changed.');return;}
-  if(b.schema_version>SCHEMA){toast('This backup is from a newer version of PIP.');return;}
-  if(await checksum(b.data)!==b.checksum){toast('This backup looks damaged (checksum mismatch). Nothing was changed.');return;}
-  const cur=S.save.pet;
-  const ok=await confirmDialog({title:`Restore ${b.data.pet.name}?`,body:`Backup from ${new Date(b.exported_at).toLocaleString()} with ${b.data.memories.length} memories. ${cur?`This replaces ${cur.name} and everything on this device.`:'Nothing on this device will be lost.'}`,verb:cur?`Replace with ${b.data.pet.name}`:'Restore',danger:!!cur});
-  if(!ok)return;const prev=S.save;S.save=Object.assign(freshSave(),b.data);
-  if(await persist()){history_.length=0;toast('Restored.');go('home',{},{replace:true});}else{S.save=prev;toast('Couldn’t write to this device. Nothing was changed.');}};i.click();}
-VIEWS.backup={
-  html:()=>`${topbar('Backup')}<div class="scroll stack"><h2>Keep a copy</h2>
-   <p class="muted">PIP has no accounts, so clearing your browser data removes your pet. A backup file lets you restore it here or in another browser.</p>
-   <p><b>Last export:</b> ${S.save.lastExport?new Date(S.save.lastExport).toLocaleString():'never'}</p>
-   <p class="small muted">Includes your pet, settings, ${S.save.memories.length} memories, recent conversation and care history. It’s a plain JSON file with a checksum — keep it somewhere private.</p>
-  </div><div class="foot"><button class="btn primary block" data-exp>Export backup</button><button class="btn block" data-imp>Restore from a file</button></div>`,
-  bind(){app.querySelector('[data-exp]').onclick=async()=>{await exportBackup();render();toast('Backup downloaded.');};app.querySelector('[data-imp]').onclick=pickBackup;}
-};
-VIEWS.privacy={
-  html:()=>`${topbar('Data & privacy')}<div class="scroll stack">${privacyFacts()}
-   <p class="small muted">This beta keeps nothing about you on PIP's server, so deleting here is complete. Files you exported are yours to delete.</p>
-   <div class="divider"></div><button class="btn block" data-dl>Download my data</button>
-   <h2 style="margin-top:8px">Delete</h2>
-   <button class="btn danger block" data-clear>Clear conversation (${S.save.convo.length} messages)</button>
-   <button class="btn danger block" data-mems>Delete all memories (${S.save.memories.length})</button>
-   <button class="btn danger solid block" data-all>Delete ${esc(S.save.pet.name)} and all data</button>
-  </div>`,
-  bind(){
-    const n=S.save.pet.name;
-    app.querySelector('[data-dl]').onclick=()=>exportBackup().then(()=>toast('Downloaded.'));
-    app.querySelector('[data-clear]').onclick=async()=>{if(!await confirmDialog({title:'Clear conversation?',body:'Messages are removed from this device. Saved memories stay — delete those separately.',verb:'Clear conversation',danger:true}))return;S.save.convo=[];if(await persist()){toast('Conversation cleared.');render();}};
-    app.querySelector('[data-mems]').onclick=async()=>{if(!await confirmDialog({title:'Delete all memories?',body:`${n} will stop using all of them immediately.`,verb:'Delete all memories',danger:true}))return;S.save.memories=[];if(await persist()){toast('Memories deleted.');render();}};
-    app.querySelector('[data-all]').onclick=async()=>{if(!await confirmDialog({title:`Delete ${n}?`,body:'Your pet, memories, conversation, care history and settings are erased from this device. This can’t be undone unless you have a backup file.',verb:`Delete ${n}`,danger:true}))return;
-      try{await DB.del('save');S.save=freshSave();history_.length=0;go('welcome',{},{replace:true});toast('Everything was deleted from this device.');}catch(e){toast('Couldn’t delete. Try again.');}};
-  }
-};
-
-/* ---------------- boot ---------------- */
-(async()=>{
-  try{const s=await DB.get('save');if(s&&s.pet){S.save=Object.assign(freshSave(),s);S.save.settings=Object.assign(freshSave().settings,s.settings||{});}}
-  catch(e){S.saveState='error';}
-  setPet(S.save.pet&&stats().energy<30?'rest':'idle');
-  go(S.save.pet?'home':'welcome',{},{replace:true});
-  fetch('/api/health').then(r=>r.json()).then(h=>{const el=document.getElementById('svc');if(el)el.innerHTML=`<span class="status-chip ${h.ai?'ok':'off'}">AI 模型${h.ai?' · 已连接':' · 未配置（对话会标注 simple response）'}</span>`;}).catch(()=>{});
-})();
-})();
+/* ============================== BOOT ============================== */
+function boot() {
+  fxEnsure();
+  S = load();
+  if (S) { document.documentElement.classList.toggle('pip-rm', !!S.settings.rm); APP.classList.toggle('rm', !!S.settings.rm); ensureQuests(); tickNeeds(true); goMain('home'); }
+  else obWelcome();
+  fetch('/api/health').then(r => r.json()).then(h => { HEALTH.ai = !!h.ai; const el = document.getElementById('svc'); if (el) el.innerHTML = `<span class="status-chip ${h.ai ? 'ok' : 'off'}">AI chat ${h.ai ? '· connected' : '· not configured — replies are labeled "Simple response"'}</span>`; }).catch(() => { });
+  setInterval(() => { if (S && !document.hidden) { tickNeeds(false); updateHud(); } }, 20000);
+}
+const HEALTH = { ai: null };
+document.addEventListener('DOMContentLoaded', boot);

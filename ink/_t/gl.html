@@ -1,0 +1,16 @@
+<!doctype html><html><body style="margin:0;background:#000"><canvas id="c" style="width:393px;height:852px;display:block"></canvas>
+<script src="/ink/ar-gl.js"></script><script>
+const q=new URLSearchParams(location.search);
+const e=InkAR.create(document.getElementById('c'));
+const cv=document.createElement('canvas');cv.width=cv.height=1024;const x=cv.getContext('2d');
+x.lineWidth=26;x.strokeStyle='#111';x.fillStyle='#c22';x.beginPath();x.arc(512,512,300,0,7);x.fill();x.stroke();
+x.lineWidth=6;x.beginPath();x.moveTo(250,500);x.bezierCurveTo(400,300,600,700,780,500);x.stroke();
+x.fillStyle='#e8c020';x.beginPath();x.arc(512,512,120,0,7);x.fill();x.lineWidth=26;x.stroke();
+x.fillStyle='#2a7a3a';x.fillRect(420,820,180,90);x.strokeRect(420,820,180,90);
+e.setTattoo(cv,1);
+if(q.get('body'))e.setBody(q.get('body'));
+e.set({daysL:+(q.get('d')||40),hair:+(q.get('hair')||0),scan:+(q.get('scan')||0),edit:+(q.get('edit')||0)});
+if(q.get('skin'))e.setSkin(q.get('skin').split(',').map(Number));
+e.state.place.size=+(q.get('size')||8);e.state.roll=+(q.get('roll')||0);e.state.sway=0;
+e.state.t0=performance.now()+(q.get("dbg")?1e6:0);e.render(performance.now());
+</script></body></html>
