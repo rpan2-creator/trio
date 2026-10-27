@@ -3,28 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>TABLE · Party games</title>
-<meta name="description" content="Pick a game that fits the group, share a code, and play on everyone's phones.">
-<meta name="theme-color" content="#F6F2E8">
+<title>TABLE · Game night, sorted</title>
+<meta name="description" content="Pick the right party game for your group and play it on one phone: Crazy Eights, Blackjack, Ludo, Werewolf and Forehead. Virtual cards, dice and boards included.">
+<meta name="theme-color" content="#140b2e">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,600;9..40,700&family=Manrope:wght@700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/shared/frame.css">
 <link rel="stylesheet" href="/table/table.css">
 </head>
 <body>
 <main class="stage">
   <section class="side-panel">
-    <a class="back-hub" href="/">← 所有应用</a>
-    <div class="eyebrow" style="margin-top:22px">PRD 03 · P0 BETA</div>
-    <h1>TABLE 聚会游戏</h1>
-    <p>先按人数、设备、时长、氛围硬筛，再由模型在候选中解释；三款原创游戏的发牌、计时、投票、计分全部在服务端完成，每台手机只拿到自己能看的信息。</p>
+    <a class="back-hub" href="/">← All apps</a>
+    <div class="eyebrow" style="margin-top:22px">PRD 03 · PARTY GAMES</div>
+    <h1>TABLE — game night, sorted</h1>
+    <p>Tell it how many people, the vibe and how long you've got. It picks the game, deals the virtual cards, rolls the dice and keeps score — all on one phone, no sign-up.</p>
     <ul>
-      <li>房间码 + 链接 / 二维码加入，无需注册</li>
-      <li>断线用同一令牌回到原座位</li>
-      <li>一台手机模式：共同频率、描述接力</li>
-      <li>多人测试请用多台手机打开同一房间</li>
+      <li>Five full games: Crazy Eights, Blackjack, Ludo, Werewolf, Forehead</li>
+      <li>Pass-and-play privacy screens, plus bots to fill empty seats</li>
+      <li>Animated rules in three steps — skip if you know it</li>
+      <li>Players and settings saved on this device only</li>
     </ul>
-    <div id="svc"></div>
   </section>
   <div class="device-wrap">
     <div class="iphone"><div class="bezel"><div class="screen">
@@ -34,7 +33,14 @@
 </main>
 <div id="sr" class="sr-only" aria-live="polite"></div>
 <script src="/shared/frame.js"></script>
-<script src="/shared/games.js"></script>
+<script src="/table/core.js"></script>
+<script src="/table/cards.js"></script>
+<script src="/table/pieces.js"></script>
+<script src="/table/games/crazy8.js"></script>
+<script src="/table/games/blackjack.js"></script>
+<script src="/table/games/ludo.js"></script>
+<script src="/table/games/werewolf.js"></script>
+<script src="/table/games/forehead.js"></script>
 <script src="/table/app.js"></script>
 </body>
 </html>
